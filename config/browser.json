@@ -1,0 +1,12 @@
+{
+    "use_nexus": false,
+    "use_nst": true,
+    "nst_api_key": "c235e5e1-7cf2-42cb-88ea-27e8376094f0",
+    "nst_api_base": "http://localhost:8848/api/v2",
+    "nexus_api_key": "",
+    "browser_binary": "",
+    "nexus_binary": "",
+    "fallback_to_chrome": true,
+    "chrome_version": 146,
+    "notes": "NST Browser API for desktop. NexusBrowser local profiles use NST nstchrome binary automatically."
+}

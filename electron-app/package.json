@@ -1,0 +1,56 @@
+{
+  "name": "nexus-anty-profile-manager",
+  "version": "1.7.0",
+  "description": "NST-powered Anti-Detection Profile Manager",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win"
+  },
+  "keywords": [
+    "gmail",
+    "automation",
+    "bulk",
+    "manager"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "socket.io-client": "^4.7.0"
+  },
+  "build": {
+    "appId": "com.nexus.anty.profile.manager",
+    "productName": "Nexus Anty Profile Manager with NST",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "extraResources": [
+      {
+        "from": "backend/dist/nexus-anty-engine.exe",
+        "to": "backend/nexus-anty-engine.exe"
+      },
+      {
+        "from": "../config/",
+        "to": "config/",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  }
+}

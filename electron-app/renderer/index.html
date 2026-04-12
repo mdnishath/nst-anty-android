@@ -1,0 +1,1917 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com; connect-src 'self' http://127.0.0.1:5000 http://localhost:5000; img-src 'self' data: http://127.0.0.1:5000 http://localhost:5000;">
+    <title>Nexus Anty Profile Manager</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body style="background:#0f1117;">
+    <!-- loginOverlay removed (no licensing) -->
+    <div id="loginOverlay" style="display:none;"></div>
+
+    <!-- ── Launch Splash Screen ──────────────────────────────────────────── -->
+    <div id="launchSplash" style="
+        position:fixed;inset:0;z-index:99999;
+        background:#0f1117;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        gap:24px;
+        transition:opacity 0.5s ease;
+    ">
+        <!-- Logo / brand -->
+        <div style="display:flex;align-items:center;gap:14px;">
+            <div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#6366f1,#3b4fd8);display:flex;align-items:center;justify-content:center;box-shadow:0 0 32px rgba(99,102,241,0.4);">
+                <i class="fas fa-envelope-open-text" style="color:#fff;font-size:24px;"></i>
+            </div>
+            <div>
+                <div style="font-size:22px;font-weight:700;color:#e2e8f0;letter-spacing:0.5px;">Nexus Anty</div>
+                <div style="font-size:12px;color:#6366f1;letter-spacing:1px;text-transform:uppercase;">Profile Manager</div>
+            </div>
+        </div>
+
+        <!-- Spinner -->
+        <div style="position:relative;width:48px;height:48px;">
+            <div style="
+                position:absolute;inset:0;border-radius:50%;
+                border:3px solid rgba(99,102,241,0.15);
+            "></div>
+            <div id="splashSpinner" style="
+                position:absolute;inset:0;border-radius:50%;
+                border:3px solid transparent;
+                border-top-color:#6366f1;
+                animation:splashSpin 0.9s linear infinite;
+            "></div>
+        </div>
+
+        <!-- Status text -->
+        <div id="splashStatus" style="font-size:13px;color:#64748b;letter-spacing:0.3px;">Starting backend…</div>
+
+        <!-- Dots progress -->
+        <div style="display:flex;gap:6px;margin-top:-8px;">
+            <div class="splash-dot" style="width:6px;height:6px;border-radius:50%;background:#6366f1;animation:splashDot 1.4s ease-in-out infinite;"></div>
+            <div class="splash-dot" style="width:6px;height:6px;border-radius:50%;background:#6366f1;animation:splashDot 1.4s ease-in-out 0.2s infinite;"></div>
+            <div class="splash-dot" style="width:6px;height:6px;border-radius:50%;background:#6366f1;animation:splashDot 1.4s ease-in-out 0.4s infinite;"></div>
+        </div>
+    </div>
+    <style>
+        @keyframes splashSpin {
+            to { transform: rotate(360deg); }
+        }
+        @keyframes splashDot {
+            0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+            40%            { opacity: 1;   transform: scale(1.2); }
+        }
+    </style>
+
+<div class="sidebar">
+        <div class="logo">
+            <div class="logo-icon"><i class="fas fa-envelope-open-text"></i></div>
+            <h2>Nexus Anty</h2>
+        </div>
+        
+        <div class="nav-menu">
+            <div class="nav-section">Main</div>
+            <a href="#" class="nav-item active" data-page="dashboard">
+                <i class="fas fa-chart-pie icon"></i> Dashboard
+            </a>
+            <a href="#" class="nav-item" data-page="profiles">
+                <i class="fas fa-user-circle icon"></i> Profile Manager
+            </a>
+            <a href="#" class="nav-item" data-page="results">
+                <i class="fas fa-chart-line icon"></i> Results
+            </a>
+
+            <div class="nav-section">Settings</div>
+            <a href="#" class="nav-item" data-page="config">
+                <i class="fas fa-wrench icon"></i> Configuration
+            </a>
+            <a href="#" class="nav-item" data-page="tools">
+                <i class="fas fa-toolbox icon"></i> Tools
+            </a>
+
+            <a href="#" class="nav-item" data-page="about">
+                <i class="fas fa-info-circle icon"></i> About
+            </a>
+        </div>
+
+        <div class="sidebar-footer">
+            <button id="serverToggleBtn" class="state-start">
+                <i class="fas fa-play"></i> Start Backend
+            </button>
+            <div class="status-indicator">
+                <div class="status-dot" id="backendStatusDot"></div>
+                <span id="backendStatusText">Backend: Offline</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+<!-- Dashboard Page -->
+        <div class="page active" id="dashboard">
+            <div class="page-header">
+                <h1>Overview</h1>
+                <p>Real-time telemetry and execution metrics.</p>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card glass">
+                    <div class="stat-header">
+                        <div class="stat-label">Total Accounts</div>
+                        <div class="stat-icon total"><i class="fas fa-users"></i></div>
+                    </div>
+                    <div class="stat-value" id="totalAccounts">0</div>
+                </div>
+                <div class="stat-card glass">
+                    <div class="stat-header">
+                        <div class="stat-label">Successful</div>
+                        <div class="stat-icon success"><i class="fas fa-check-circle"></i></div>
+                    </div>
+                    <div class="stat-value" id="totalSuccess">0</div>
+                </div>
+                <div class="stat-card glass">
+                    <div class="stat-header">
+                        <div class="stat-label">Failed</div>
+                        <div class="stat-icon error"><i class="fas fa-exclamation-circle"></i></div>
+                    </div>
+                    <div class="stat-value" id="totalFailed">0</div>
+                </div>
+                <div class="stat-card glass">
+                    <div class="stat-header">
+                        <div class="stat-label">Pending / Skipped</div>
+                        <div class="stat-icon pending"><i class="fas fa-hourglass-half"></i></div>
+                    </div>
+                    <div class="stat-value" id="totalPending">0</div>
+                </div>
+            </div>
+
+            <div class="card glass">
+                <h3><i class="fas fa-terminal"></i> Terminal Output</h3>
+                <div class="progress-stats">
+                    <span id="progressText">Idle</span>
+                    <span id="progressPercentage">0%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div class="current-account" id="currentAccount">WAITING_FOR_JOB</div>
+                <div id="stepIndicator" style="color:#94a3b8; font-size:12px; margin-top:4px; font-style:italic;"></div>
+                
+                <div style="margin-top: 20px;">
+                    <div style="display:flex; justify-content:flex-end; margin-bottom:8px;">
+                        <button class="btn btn-secondary btn-sm" id="clearLogBtn">
+                            <i class="fas fa-eraser"></i> Clear Log
+                        </button>
+                    </div>
+                    <div class="log-container" id="liveLog">
+                        <!-- Logs injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- SMS Relay Debug Widget -->
+            <div class="card glass" id="smsRelayCard">
+                <h3><i class="fas fa-sms"></i> SMS Relay Monitor</h3>
+                <p class="card-subtitle">Check if SMS codes are being received from the phone relay app.</p>
+                <div style="display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+                    <div style="flex:1; min-width:200px;">
+                        <span style="font-size:12px; color:var(--text-secondary);">Last Code Received:</span>
+                        <div id="smsLastCode" style="font-size:20px; font-weight:bold; color:#5E6AD2; font-family:'JetBrains Mono',monospace; margin-top:4px;">--</div>
+                    </div>
+                    <div style="flex:1; min-width:200px;">
+                        <span style="font-size:12px; color:var(--text-secondary);">From:</span>
+                        <div id="smsLastSender" style="font-size:14px; color:#fff; font-family:'JetBrains Mono',monospace; margin-top:4px;">--</div>
+                    </div>
+                    <div style="flex:1; min-width:120px;">
+                        <span style="font-size:12px; color:var(--text-secondary);">Status:</span>
+                        <div id="smsRelayStatus" style="font-size:14px; color:#e74c3c; margin-top:4px;">No codes yet</div>
+                    </div>
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="btn btn-secondary btn-sm" id="smsTestBtn">
+                        <i class="fas fa-paper-plane"></i> Send Test Code
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="smsCheckBtn">
+                        <i class="fas fa-sync"></i> Check Latest
+                    </button>
+                    <span id="smsTestResult" style="font-size:12px; color:var(--text-secondary); align-self:center;"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Page -->
+        <div class="page" id="results">
+            <div class="page-header">
+                <h1><i class="fas fa-chart-bar" style="margin-right:8px;color:var(--primary);"></i>Reports</h1>
+                <p>Generate clean reports from raw output files. Manage all reports here.</p>
+            </div>
+
+            <!-- Toolbar -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                <button class="btn btn-secondary btn-sm" id="refreshReportsBtn"><i class="fas fa-sync-alt"></i> Refresh</button>
+                <div style="flex:1;"></div>
+                <button class="btn btn-danger btn-sm" id="deleteAllReportsBtn"><i class="fas fa-trash-alt"></i> Delete All</button>
+            </div>
+
+            <!-- Pro Reports section -->
+            <div id="proReportsSection" style="display:none;">
+                <div class="rpt-section-header">
+                    <i class="fas fa-crown" style="color:#fbbf24;"></i>
+                    <span>Pro Reports</span>
+                    <span id="proReportCount" class="rpt-count-badge">0</span>
+                </div>
+                <div id="proReportsList"></div>
+            </div>
+
+            <!-- Raw Output section -->
+            <div id="rawOutputSection" style="margin-top:16px;">
+                <div class="rpt-section-header">
+                    <i class="fas fa-database" style="color:#94a3b8;"></i>
+                    <span>Raw Output</span>
+                    <span id="rawOutputCount" class="rpt-count-badge">0</span>
+                </div>
+                <div id="rawOutputList">
+                    <div style="color:#64748b;font-style:italic;padding:20px 0;">No output files found.</div>
+                </div>
+            </div>
+
+            <!-- Keep hidden reportsList for backward compat -->
+            <div id="reportsList" style="display:none;"></div>
+
+            <!-- XLS Template Generator -->
+            <div class="card glass" style="margin-top:16px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+                    <div>
+                        <h3 style="margin:0;"><i class="fas fa-file-download" style="margin-right:6px;color:#94a3b8;"></i> Template Generator</h3>
+                        <p class="card-subtitle" style="margin-top:4px;">Blank Excel template with required columns.</p>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <select id="templateStepSelect" style="padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.08); color:#fff; font-size:13px;">
+                            <option value="1">Step 1 - Language/Activity</option>
+                            <option value="2">Step 2 - Security</option>
+                            <option value="3">Step 3 - Maps Reviews</option>
+                            <option value="4">Step 4 - Appeals</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" id="generateTemplateBtn">
+                            <i class="fas fa-file-download"></i> Generate
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Config Page -->
+        <div class="page" id="config">
+            <div class="page-header">
+                <h1>System Configuration</h1>
+                <p>Edit and save runtime settings. Changes apply on next run.</p>
+            </div>
+
+            <!-- NST Browser API -->
+            <div class="card glass">
+                <h3><i class="fas fa-fingerprint"></i> NST Browser API</h3>
+                <p class="card-subtitle">Anti-detect browser engine — <code>config/browser.json</code></p>
+                <div class="form-grid" style="margin-top:20px;">
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>NST API Key</label>
+                        <div style="display:flex;gap:8px;">
+                            <input type="password" id="cfg_nst_api_key" placeholder="Enter your NST Browser API key" style="flex:1;font-family:monospace;font-size:13px;">
+                            <button class="btn btn-secondary" id="toggleNstKeyBtn" style="min-width:40px;padding:6px 10px;" title="Show/Hide key">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>API Base URL</label>
+                        <input type="text" id="cfg_nst_api_base" placeholder="http://localhost:8848/api/v2" style="font-family:monospace;font-size:13px;">
+                    </div>
+                    <div class="form-group">
+                        <label>NST Status</label>
+                        <div id="nstStatusDisplay" style="display:flex;align-items:center;gap:8px;height:38px;">
+                            <span id="nstStatusDot" style="width:10px;height:10px;border-radius:50%;background:#666;display:inline-block;"></span>
+                            <span id="nstStatusText" style="font-size:13px;opacity:0.7;">Checking...</span>
+                            <button class="btn btn-secondary" id="checkNstBtn" style="margin-left:auto;padding:4px 12px;font-size:12px;">
+                                <i class="fas fa-sync-alt"></i> Check
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top:12px;">
+                    <button class="btn btn-primary" id="saveNstConfigBtn" style="margin-right:8px;">
+                        <i class="fas fa-save"></i> Save NST Config
+                    </button>
+                </div>
+            </div>
+
+            <!-- Nexus API Key -->
+            <div class="card glass">
+                <h3><i class="fas fa-key"></i> Nexus API</h3>
+                <p class="card-subtitle">External REST API at <code>/api/nexus/v2/</code> — set a key to protect it, or leave empty for open access.</p>
+                <div class="form-grid" style="margin-top:20px;">
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>Nexus API Key</label>
+                        <div style="display:flex;gap:8px;">
+                            <input type="password" id="cfg_nexus_api_key" placeholder="Optional — leave empty for no auth" style="flex:1;font-family:monospace;font-size:13px;">
+                            <button class="btn btn-secondary" id="toggleNexusKeyBtn" style="min-width:40px;padding:6px 10px;" title="Show/Hide key">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button class="btn btn-secondary" id="generateNexusKeyBtn" style="padding:6px 12px;font-size:12px;" title="Generate random key">
+                                <i class="fas fa-random"></i> Generate
+                            </button>
+                        </div>
+                        <span style="display:block;margin-top:6px;font-size:11px;color:#94a3b8;">
+                            Use <code>x-api-key</code> header when calling the Nexus API externally.
+                        </span>
+                    </div>
+                </div>
+                <div style="margin-top:12px;">
+                    <button class="btn btn-primary" id="saveNexusApiKeyBtn" style="margin-right:8px;">
+                        <i class="fas fa-save"></i> Save Nexus API Key
+                    </button>
+                </div>
+            </div>
+
+            <!-- Browser & Processing -->
+            <div class="card glass">
+                <h3><i class="fas fa-sliders-h"></i> Browser &amp; Processing</h3>
+                <p class="card-subtitle">From <code>config/settings.json</code></p>
+                <div class="form-grid" style="margin-top:20px;">
+                    <div class="form-group">
+                        <label>Headless Mode</label>
+                        <select id="cfg_headless">
+                            <option value="false">Off (show browser)</option>
+                            <option value="true">On (hidden)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Slow Mo (ms)</label>
+                        <input type="number" id="cfg_slow_mo" min="0" max="5000" placeholder="500">
+                    </div>
+                    <div class="form-group">
+                        <label>Page Timeout (ms)</label>
+                        <input type="number" id="cfg_timeout" min="5000" max="300000" placeholder="60000">
+                    </div>
+                    <div class="form-group">
+                        <label>Default Workers</label>
+                        <input type="number" id="cfg_workers" min="1" max="20" placeholder="5">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Retries</label>
+                        <input type="number" id="cfg_retries" min="0" max="10" placeholder="3">
+                    </div>
+                    <div class="form-group">
+                        <label>Retry Delay (s)</label>
+                        <input type="number" id="cfg_retry_delay" min="0" max="60" placeholder="5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- URL Constants -->
+            <div class="card glass">
+                <h3><i class="fas fa-link"></i> URL Constants</h3>
+                <p class="card-subtitle">From <code>config/urls.json</code> — edit with caution</p>
+                <div class="form-grid" id="urlFields" style="margin-top:20px;">
+                    <!-- dynamically populated -->
+                </div>
+            </div>
+
+            <!-- Delays -->
+            <div class="card glass">
+                <h3><i class="fas fa-clock"></i> Timing Delays</h3>
+                <p class="card-subtitle">Page load and typing delays (seconds)</p>
+                <div class="form-grid" style="margin-top:20px;">
+                    <div class="form-group">
+                        <label>Page Load Delay (s)</label>
+                        <input type="number" id="cfg_delay_page_load" min="0" max="30" step="0.5" placeholder="3">
+                    </div>
+                    <div class="form-group">
+                        <label>Typing Delay (ms)</label>
+                        <input type="number" id="cfg_delay_typing" min="0" max="1000" placeholder="100">
+                    </div>
+                    <div class="form-group">
+                        <label>Action Delay (s)</label>
+                        <input type="number" id="cfg_delay_action" min="0" max="30" step="0.5" placeholder="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Between Accounts (s)</label>
+                        <input type="number" id="cfg_delay_between" min="0" max="60" step="1" placeholder="5">
+                    </div>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-primary" id="saveConfigBtn">
+                    <i class="fas fa-save"></i> Save Configuration
+                </button>
+                <button class="btn btn-secondary" id="reloadConfigBtn">
+                    <i class="fas fa-sync-alt"></i> Reload from Disk
+                </button>
+            </div>
+        </div>
+
+        <!-- ================================================== -->
+        <!-- PROFILE MANAGER - Clean rebuild                     -->
+        <!-- ================================================== -->
+        <div class="page" id="profiles">
+            <div class="page-header">
+                <h1><i class="fas fa-users" style="margin-right:8px;color:var(--primary);"></i>Profile Manager</h1>
+                <p>Manage isolated browser profiles with unique fingerprints, proxies, and sessions.</p>
+            </div>
+
+            <!-- Storage Path -->
+            <div class="card glass" style="padding:10px 16px;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <i class="fas fa-folder" style="color:#94a3b8;font-size:13px;"></i>
+                    <input type="text" id="profileStoragePath" placeholder="Profile storage path" style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;">
+                    <button class="btn btn-secondary btn-sm" id="profileSelectStorageBtn"><i class="fas fa-folder-open"></i></button>
+                    <button class="btn btn-primary btn-sm" id="profileSaveStorageBtn"><i class="fas fa-save"></i></button>
+                </div>
+            </div>
+
+            <!-- Filter Bar (NST-style) -->
+            <div id="profileFilterBar" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
+                <button class="btn btn-sm pm-filter-btn active" data-filter="all">All <span id="pmFilterAll" class="pm-filter-count">0</span></button>
+                <button class="btn btn-sm pm-filter-btn" data-filter="logged_in">Logged In <span id="pmFilterLoggedIn" class="pm-filter-count">0</span></button>
+                <button class="btn btn-sm pm-filter-btn" data-filter="not_logged_in">Not Logged In <span id="pmFilterNotLoggedIn" class="pm-filter-count">0</span></button>
+                <button class="btn btn-sm pm-filter-btn" data-filter="login_failed">Failed <span id="pmFilterFailed" class="pm-filter-count">0</span></button>
+                <button class="btn btn-sm pm-filter-btn" data-filter="running">Running <span id="pmFilterRunning" class="pm-filter-count">0</span></button>
+                <button class="btn btn-sm pm-filter-btn" data-filter="nst" style="border-color:var(--primary);">NST <span id="pmFilterNst" class="pm-filter-count">0</span></button>
+                <div style="flex:1;"></div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <i class="fas fa-layer-group" style="color:#94a3b8;font-size:12px;"></i>
+                    <select id="pmGroupFilter" style="background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px;min-width:120px;">
+                        <option value="">All Groups</option>
+                    </select>
+                    <button id="manageGroupsBtn" title="Manage Groups" style="background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:#94a3b8;cursor:pointer;font-size:12px;"><i class="fas fa-cog"></i></button>
+                </div>
+            </div>
+
+            <!-- Bulk Action Bar (shown when profiles selected) -->
+            <div id="pmBulkBar" style="display:none;background:#131c33;border:1px solid #3b4fd8;border-radius:8px;padding:10px 14px;margin-bottom:8px;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span id="pmBulkCount" style="font-size:13px;color:#a5b4fc;font-weight:700;white-space:nowrap;">0 selected</span>
+                <div style="width:1px;height:24px;background:rgba(255,255,255,0.1);"></div>
+                <!-- Re-login -->
+                <i class="fas fa-sign-in-alt" style="color:#22c55e;font-size:12px;"></i>
+                <input type="number" id="pmBulkReloginWorkers" value="2" min="1" max="5" title="Workers (max 5)"
+                    style="background:#0f1629;border:1px solid #22c55e44;border-radius:6px;padding:5px 8px;color:#e2e8f0;font-size:12px;width:60px;">
+                <input type="number" id="pmBulkReloginStagger" value="3" min="0" max="30" title="Stagger delay (sec) between workers"
+                    style="background:#0f1629;border:1px solid #22c55e44;border-radius:6px;padding:5px 8px;color:#e2e8f0;font-size:12px;width:55px;"
+                    placeholder="3s">
+                <button class="btn btn-sm" id="pmBulkReloginBtn"
+                    style="background:rgba(34,197,94,0.14);color:#4ade80;border:1px solid rgba(34,197,94,0.3);white-space:nowrap;"
+                    title="Re-login selected profiles (stagger delay prevents IP rate-limiting)">
+                    <i class="fas fa-sign-in-alt"></i> Re-Login
+                </button>
+                <div style="width:1px;height:24px;background:rgba(255,255,255,0.1);"></div>
+                <!-- Group input + action buttons -->
+                <i class="fas fa-layer-group" style="color:#6366f1;font-size:12px;"></i>
+                <input type="text" id="pmBulkGroupInput" list="pmGroupList" placeholder="Target group name..." autocomplete="off"
+                    style="background:#0f1629;border:1px solid #3b4fd8;border-radius:6px;padding:5px 12px;color:#e2e8f0;font-size:12px;width:180px;">
+                <datalist id="pmGroupList"></datalist>
+                <!-- Add = keeps existing groups, just adds this one -->
+                <button class="btn btn-sm" id="pmBulkAddBtn"
+                    style="background:rgba(99,102,241,0.18);color:#a5b4fc;border:1px solid rgba(99,102,241,0.4);white-space:nowrap;"
+                    title="Add to group — keeps existing groups">
+                    <i class="fas fa-plus"></i> Add to Group
+                </button>
+                <!-- Move = removes ALL previous groups, sets only this one -->
+                <button class="btn btn-sm" id="pmBulkMoveBtn"
+                    style="background:rgba(34,197,94,0.14);color:#4ade80;border:1px solid rgba(34,197,94,0.3);white-space:nowrap;"
+                    title="Move to group — removes from all previous groups">
+                    <i class="fas fa-arrows-alt"></i> Move to Group
+                </button>
+                <!-- Remove from a specific group -->
+                <button class="btn btn-sm" id="pmBulkRemoveBtn"
+                    style="background:rgba(239,68,68,0.12);color:#f87171;border:1px solid rgba(239,68,68,0.25);white-space:nowrap;"
+                    title="Remove from this group only">
+                    <i class="fas fa-minus"></i> Remove from Group
+                </button>
+                <div style="width:1px;height:24px;background:rgba(255,255,255,0.1);"></div>
+                <!-- Note field — updated along with group change -->
+                <i class="fas fa-sticky-note" style="color:#f59e0b;font-size:12px;" title="Note (optional — saved to all selected profiles)"></i>
+                <input type="text" id="pmBulkNoteInput" placeholder="Note for selected profiles… (optional)"
+                    style="background:#0f1629;border:1px solid #f59e0b44;border-radius:6px;padding:5px 12px;color:#e2e8f0;font-size:12px;width:240px;"
+                    title="Leave a note on all selected profiles. Applied with group changes or via the Save Note button.">
+                <button class="btn btn-sm" id="pmBulkSaveNoteBtn"
+                    style="background:rgba(245,158,11,0.14);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);white-space:nowrap;"
+                    title="Save this note to all selected profiles (without changing group)">
+                    <i class="fas fa-save"></i> Save Note
+                </button>
+                <div style="width:1px;height:24px;background:rgba(255,255,255,0.1);"></div>
+                <!-- Proxy bulk update -->
+                <i class="fas fa-plug" style="color:#38bdf8;font-size:12px;" title="Bulk update proxy user/pass for selected profiles"></i>
+                <input type="text" id="pmBulkProxyUser" placeholder="Proxy user…"
+                    style="background:#0f1629;border:1px solid #38bdf844;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:12px;width:130px;"
+                    title="New proxy username for all selected profiles">
+                <input type="text" id="pmBulkProxyPass" placeholder="Proxy pass…"
+                    style="background:#0f1629;border:1px solid #38bdf844;border-radius:6px;padding:5px 10px;color:#e2e8f0;font-size:12px;width:130px;"
+                    title="New proxy password for all selected profiles">
+                <button class="btn btn-sm" id="pmBulkUpdateProxyBtn"
+                    style="background:rgba(56,189,248,0.14);color:#7dd3fc;border:1px solid rgba(56,189,248,0.35);white-space:nowrap;"
+                    title="Update proxy user/pass for all selected profiles">
+                    <i class="fas fa-plug"></i> Update Proxy
+                </button>
+                <div style="flex:1;"></div>
+                <!-- Delete selected profiles -->
+                <button class="btn btn-sm" id="pmBulkDeleteBtn"
+                    style="background:rgba(239,68,68,0.14);color:#f87171;border:1px solid rgba(239,68,68,0.3);white-space:nowrap;"
+                    title="Delete selected profiles permanently">
+                    <i class="fas fa-trash"></i> Delete Selected
+                </button>
+                <div style="width:1px;height:24px;background:rgba(255,255,255,0.1);"></div>
+                <!-- Export selected profiles to Excel -->
+                <button class="btn btn-sm" id="pmBulkExportBtn"
+                    style="background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.3);white-space:nowrap;"
+                    title="Export selected profiles to Excel (email list for Write Review)">
+                    <i class="fas fa-file-excel"></i> Export
+                </button>
+                <button class="btn btn-sm" id="pmBulkClearBtn"
+                    style="background:rgba(255,255,255,0.05);color:#64748b;border:1px solid rgba(255,255,255,0.08);">
+                    <i class="fas fa-times"></i> Clear Selection
+                </button>
+            </div>
+
+            <!-- Action Bar (NST-style) — Organized with visual groups -->
+            <div class="pm-action-bar">
+                <!-- Create -->
+                <div class="pm-dropdown" style="position:relative;">
+                    <button class="btn btn-primary" id="profileCreateBtn"><i class="fas fa-plus"></i> Create Profile <i class="fas fa-caret-down" style="margin-left:4px;font-size:10px;"></i></button>
+                    <div class="pm-dropdown-menu" id="profileCreateMenu">
+                        <a href="#" id="pmCreateSingle"><i class="fas fa-user-plus"></i> Create Profile</a>
+                        <a href="#" id="pmBatchCreate"><i class="fas fa-layer-group"></i> Batch Create</a>
+                        <a href="#" id="pmBatchImport"><i class="fas fa-file-import"></i> Batch Import</a>
+                    </div>
+                </div>
+
+                <div class="pm-action-divider"></div>
+
+                <!-- Operations group -->
+                <div class="pm-action-group">
+                    <span class="pm-action-group-label">Operations</span>
+                    <div class="pm-action-group-btns">
+                        <button class="btn btn-secondary" id="profileBatchLoginBtn"><i class="fas fa-file-excel"></i> Batch Login</button>
+                        <button class="btn btn-secondary" id="profileRunOpsBtn"><i class="fas fa-cogs"></i> Run Ops</button>
+                        <button class="btn btn-secondary" id="profileDoAllAppealBtn"><i class="fas fa-gavel"></i> Appeal</button>
+                        <button class="btn btn-secondary" id="profileHealthBtn"><i class="fas fa-heartbeat"></i> Health</button>
+                        <button class="btn btn-secondary" id="profileWriteReviewBtn"><i class="fas fa-star"></i> Write Review</button>
+                        <button class="btn btn-secondary" id="profileGmbToReviewBtn"><i class="fas fa-link"></i> GMB Review URL</button>
+                    </div>
+                </div>
+
+                <div style="flex:1;"></div>
+
+                <!-- Management group -->
+                <div class="pm-action-group-btns" style="gap:6px;">
+                    <button class="btn btn-secondary btn-sm" id="profileCloseAllBtn"><i class="fas fa-stop-circle"></i> Close All</button>
+                    <button class="btn btn-secondary btn-sm" id="profileCleanupBtn"><i class="fas fa-broom"></i> Cleanup</button>
+                </div>
+            </div>
+
+            <!-- Search Bar (NST-style) -->
+            <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+                <select id="profileSearchBy" style="background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:120px;">
+                    <option value="name">Name</option>
+                    <option value="email">Email</option>
+                    <option value="notes">Notes</option>
+                    <option value="proxy">Proxy IP</option>
+                    <option value="group">Group</option>
+                </select>
+                <input type="text" id="profileSearch" placeholder="Search profiles..." style="flex:1;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:8px 14px;color:var(--text);font-size:13px;">
+                <span style="font-size:13px;color:#94a3b8;white-space:nowrap;" id="profileCount">0 profiles</span>
+            </div>
+
+            <!-- Profile Table (NST-style) -->
+            <div class="card glass" style="padding:0;overflow:hidden;">
+                <!-- Table Header -->
+                <div class="pm-table-header">
+                    <div class="pm-col-check"><input type="checkbox" id="pmSelectAll" title="Select all visible profiles"></div>
+                    <div class="pm-col-profile">Profile</div>
+                    <div class="pm-col-proxy">Proxy</div>
+                    <div class="pm-col-status">Status</div>
+                    <div class="pm-col-group">Group</div>
+                    <div class="pm-col-updated" style="font-size:11px;">Activity</div>
+                    <div class="pm-col-actions">Actions</div>
+                </div>
+                <!-- Table Body -->
+                <div id="profileList" class="pm-table-body">
+                    <div class="tools-empty" style="padding:40px;"><i class="fas fa-user-circle"></i> No profiles yet. Create one to get started.</div>
+                </div>
+            </div>
+
+
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- PROFILE MODALS (outside .page to avoid z-index stacking trap) -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+
+        <!-- Profile Create/Edit Modal -->
+        <div id="profileModalOverlay" class="profile-modal-overlay">
+            <div class="profile-modal" style="width:960px;max-width:95vw;max-height:92vh;display:flex;flex-direction:column;">
+                <!-- Modal Header -->
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;">
+                    <h2 id="profileModalTitle" style="margin:0;font-size:16px;">Create Profile</h2>
+                    <button class="btn btn-secondary btn-sm" id="profileModalCloseBtn"><i class="fas fa-times"></i></button>
+                </div>
+
+                <!-- Tab Bar -->
+                <div class="pm-tab-bar" style="flex-shrink:0;">
+                    <button class="pm-tab active" data-tab="overview">Overview</button>
+                    <button class="pm-tab" data-tab="proxy">Proxy</button>
+                    <button class="pm-tab" data-tab="credentials">Credentials</button>
+                </div>
+
+                <!-- Modal Body (Tab Content + Summary) -->
+                <div style="display:flex;flex:1;overflow:hidden;">
+                    <!-- Left: Tab Content -->
+                    <div style="flex:1;overflow-y:auto;padding:20px;">
+
+                        <!-- TAB: Overview -->
+                        <div class="pm-tab-content active" data-tab-content="overview">
+                            <!-- Engine: NST API only (hidden selector, always nst) -->
+                            <input type="hidden" name="pmEngine" value="nst">
+                            <div class="form-group"><label>Name</label><input type="text" id="pmName" placeholder="Auto-generated if empty"></div>
+                            <div class="form-group"><label>Profile Groups <span style="font-size:10px;color:#64748b;">(can be multiple)</span></label>
+                                <div id="pmGroupTags" style="display:flex;flex-wrap:wrap;gap:4px;min-height:28px;padding:4px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;cursor:text;" onclick="document.getElementById('pmGroup').focus()"></div>
+                                <div style="display:flex;gap:6px;margin-top:6px;">
+                                    <input type="text" id="pmGroup" list="pmGroupList" placeholder="Type group name &amp; press Enter..." autocomplete="off" style="flex:1;">
+                                    <button type="button" id="pmGroupAddBtn" class="btn btn-sm btn-secondary"><i class="fas fa-plus"></i> Add</button>
+                                </div>
+                                <datalist id="pmGroupList"></datalist>
+                            </div>
+                            <div class="form-group"><label>Operating System</label>
+                                <div class="pm-os-pills">
+                                    <label class="pm-os-pill active" data-os="random"><input type="radio" name="pmOS" value="random" checked><i class="fas fa-random"></i> Random</label>
+                                    <label class="pm-os-pill" data-os="windows"><input type="radio" name="pmOS" value="windows"><i class="fab fa-windows"></i> Win</label>
+                                    <label class="pm-os-pill" data-os="macos"><input type="radio" name="pmOS" value="macos"><i class="fab fa-apple"></i> Mac</label>
+                                    <label class="pm-os-pill" data-os="linux"><input type="radio" name="pmOS" value="linux"><i class="fab fa-linux"></i> Linux</label>
+                                    <label class="pm-os-pill" data-os="android"><input type="radio" name="pmOS" value="android"><i class="fab fa-android"></i> Android</label>
+                                    <label class="pm-os-pill" data-os="ios"><input type="radio" name="pmOS" value="ios"><i class="fab fa-apple"></i> iOS</label>
+                                </div>
+                                <span id="pmEngineHint" class="pm-hint" style="display:block;margin-top:6px;font-size:11px;color:#94a3b8;">Fingerprinting handled automatically by the selected engine.</span>
+                            </div>
+                            <div class="form-group"><label>Startup URLs</label><input type="text" id="pmStartupUrls" placeholder="https://mail.google.com"></div>
+                            <div class="form-group" style="display:flex;align-items:center;gap:12px;margin-top:6px;">
+                                <label class="pm-toggle">
+                                    <input type="checkbox" id="pmSaveTabs" checked>
+                                    <span class="pm-toggle-slider"></span>
+                                </label>
+                                <span style="color:#e2e8f0;font-size:13px;font-weight:500;">Save &amp; Restore Tabs</span>
+                                <span class="pm-hint" style="margin-top:0;">Restores all open tabs on next launch</span>
+                            </div>
+                        </div>
+
+                        <!-- TAB: Proxy -->
+                        <div class="pm-tab-content" data-tab-content="proxy">
+                            <div class="form-group"><label>Proxy Type</label>
+                                <select id="pmProxyType"><option value="none">None</option><option value="https">HTTPS</option><option value="socks5">SOCKS5</option></select>
+                            </div>
+                            <div id="pmProxyFields" style="display:none;">
+                                <div style="display:grid;grid-template-columns:3fr 1fr;gap:10px;">
+                                    <div class="form-group"><label>Host</label><input type="text" id="pmProxyHost" placeholder="gate.nstproxy.io"></div>
+                                    <div class="form-group"><label>Port</label><input type="text" id="pmProxyPort" placeholder="24125"></div>
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                                    <div class="form-group"><label>Username</label><input type="text" id="pmProxyUser" placeholder="username"></div>
+                                    <div class="form-group"><label>Password</label><input type="text" id="pmProxyPass" placeholder="password"></div>
+                                </div>
+                                <button class="btn btn-secondary btn-sm" id="pmCheckProxy"><i class="fas fa-plug"></i> Check Proxy</button>
+                                <div id="pmProxyResult" style="margin-top:8px;font-size:12px;color:#94a3b8;display:none;"></div>
+                            </div>
+                            <hr style="border-color:var(--border);margin:16px 0;">
+                            <div class="form-group"><label>Or paste full proxy string</label>
+                                <div style="display:flex;gap:8px;">
+                                    <input type="text" id="pmProxyPaste" placeholder="host:port:user:pass" style="flex:1;">
+                                    <button class="btn btn-secondary btn-sm" id="pmParseProxy">Parse</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB: Credentials -->
+                        <div class="pm-tab-content" data-tab-content="credentials">
+                            <div class="form-group"><label>Email</label><input type="text" id="pmEmail" placeholder="user@gmail.com"></div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                                <div class="form-group"><label>Password</label><input type="text" id="pmPassword" placeholder="Gmail password"></div>
+                                <div class="form-group"><label>TOTP Secret</label><input type="text" id="pmTotp" placeholder="TOTP key" style="font-family:'JetBrains Mono',monospace;font-size:12px;"></div>
+                            </div>
+                            <!-- Inline TOTP Code Display -->
+                            <div id="pmTotpWidget" style="display:none;margin-top:2px;margin-bottom:10px;padding:10px 14px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);border-radius:8px;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;">
+                                    <div style="display:flex;align-items:center;gap:10px;">
+                                        <i class="fas fa-shield-alt" style="color:var(--primary);font-size:14px;"></i>
+                                        <span style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Auth Code</span>
+                                    </div>
+                                    <div style="display:flex;align-items:center;gap:10px;">
+                                        <span id="pmTotpCode" style="font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:var(--primary);letter-spacing:5px;">------</span>
+                                        <button class="btn btn-secondary btn-sm" id="pmTotpCopyBtn" title="Copy code" style="padding:4px 8px;font-size:12px;">
+                                            <i class="fas fa-copy"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div style="height:3px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;margin-top:8px;">
+                                    <div id="pmTotpTimerBar" style="height:100%;background:var(--primary);border-radius:2px;transition:width 1s linear;width:0%;"></div>
+                                </div>
+                            </div>
+                            <div class="form-group"><label>Business Address</label><input type="text" id="pmAddress" placeholder="e.g. 123 Main St, Paris, France — GMB area for this profile"></div>
+                            <div class="form-group"><label>Notes</label><textarea id="pmNotes" rows="2" placeholder="Any notes..."></textarea></div>
+                            <div style="font-size:12px;font-weight:600;color:#94a3b8;margin:12px 0 6px;">Backup Codes</div>
+                            <div style="display:flex;gap:6px;margin-bottom:8px;">
+                                <textarea id="pmBCParser" rows="2" placeholder="Paste all 10 codes here (space, comma, newline or tab separated) — e.g. 5370 6697 4462 0711 5090 7856 ..." style="font-size:11px;padding:6px 8px;flex:1;resize:vertical;min-height:36px;border-radius:6px;"></textarea>
+                                <button type="button" id="pmBCParseBtn" style="padding:4px 12px;font-size:11px;white-space:nowrap;border-radius:6px;background:var(--accent);color:#fff;border:none;cursor:pointer;align-self:flex-start;" title="Parse and fill all 10 backup code fields">▶ Fill</button>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                <input type="text" id="pmBC1" placeholder="Code 1" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC2" placeholder="Code 2" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC3" placeholder="Code 3" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC4" placeholder="Code 4" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC5" placeholder="Code 5" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC6" placeholder="Code 6" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC7" placeholder="Code 7" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC8" placeholder="Code 8" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC9" placeholder="Code 9" style="font-size:12px;padding:5px 8px;">
+                                <input type="text" id="pmBC10" placeholder="Code 10" style="font-size:12px;padding:5px 8px;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Summary Panel -->
+                    <div class="pm-summary-panel" style="width:220px;border-left:1px solid var(--border);padding:16px;overflow-y:auto;flex-shrink:0;">
+                        <div style="font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Summary</div>
+                        <div id="pmSummary" style="font-size:12px;color:var(--text-secondary);line-height:1.8;"></div>
+                        <div id="pmEngineInfoBox" style="margin-top:16px;padding:10px;background:#0f0f0f;border-radius:6px;font-size:11px;color:#94a3b8;">
+                            <i class="fas fa-shield-alt" style="color:var(--primary);margin-right:4px;"></i>
+                            <strong id="pmEngineInfoName">NST Browser</strong> handles all fingerprinting automatically — UA, WebGL, Canvas, Audio, WebRTC, Timezone, Language, etc.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal Footer -->
+                <div style="display:flex;gap:8px;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--border);flex-shrink:0;">
+                    <button class="btn btn-secondary" id="profileModalCancelBtn">Cancel</button>
+                    <button class="btn btn-primary" id="profileModalSaveBtn"><i class="fas fa-save"></i> <span id="profileModalSaveText">Create Profile</span></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Profile Context Menu -->
+        <div id="pmContextMenu" class="pm-context-menu" style="display:none;">
+            <a href="#" data-action="launch"><i class="fas fa-play"></i> Open</a>
+            <a href="#" data-action="relogin" style="color:#22c55e;"><i class="fas fa-sign-in-alt"></i> Re-Login</a>
+            <a href="#" data-action="edit"><i class="fas fa-pen"></i> Edit Profile</a>
+            <a href="#" data-action="close"><i class="fas fa-stop"></i> Close Browser</a>
+            <div class="pm-ctx-divider"></div>
+            <a href="#" data-action="modify-proxy"><i class="fas fa-exchange-alt"></i> Modify Proxy</a>
+            <a href="#" data-action="modify-tag"><i class="fas fa-tag"></i> Modify Tag</a>
+            <a href="#" data-action="modify-note"><i class="fas fa-sticky-note"></i> Modify Note</a>
+            <div class="pm-ctx-divider"></div>
+            <a href="#" data-action="clear-cache"><i class="fas fa-broom"></i> Clear Cache</a>
+            <a href="#" data-action="clear-cookies"><i class="fas fa-cookie-bite"></i> Clear Cookies</a>
+            <div class="pm-ctx-divider"></div>
+            <a href="#" data-action="export"><i class="fas fa-file-export"></i> Export Profile</a>
+            <a href="#" data-action="delete" style="color:#ef4444;"><i class="fas fa-trash"></i> Delete</a>
+        </div>
+
+        <!-- Batch Login Modal -->
+        <div id="batchLoginModalOverlay" class="profile-modal-overlay">
+            <div class="profile-modal" style="max-width:480px;padding:20px;">
+                <h2 style="margin:0 0 16px;">Batch Login</h2>
+                <div class="form-group">
+                    <label>Excel File</label>
+                    <div style="display:flex;gap:8px;"><input type="text" id="batchLoginFilePath" placeholder="accounts.xlsx" style="flex:1;"><button class="btn btn-secondary btn-sm" id="batchLoginBrowseBtn"><i class="fas fa-folder-open"></i></button></div>
+                    <!-- File preview bar -->
+                    <div id="batchLoginPreview" style="display:none;align-items:center;gap:10px;margin-top:8px;padding:8px 12px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:6px;font-size:12px;flex-wrap:wrap;"></div>
+                </div>
+                <!-- Engine: NST API only -->
+                <input type="hidden" name="batchEngine" value="nst">
+                <!-- Device OS -->
+                <div class="form-group">
+                    <label>Device OS</label>
+                    <div class="pm-os-pills">
+                        <label class="pm-os-pill active" data-os="random"><input type="radio" name="batchOs" value="random" checked><i class="fas fa-random"></i> Random</label>
+                        <label class="pm-os-pill" data-os="windows"><input type="radio" name="batchOs" value="windows"><i class="fab fa-windows"></i> Win</label>
+                        <label class="pm-os-pill" data-os="macos"><input type="radio" name="batchOs" value="macos"><i class="fab fa-apple"></i> Mac</label>
+                        <label class="pm-os-pill" data-os="linux"><input type="radio" name="batchOs" value="linux"><i class="fab fa-linux"></i> Linux</label>
+                        <label class="pm-os-pill" data-os="android"><input type="radio" name="batchOs" value="android"><i class="fab fa-android"></i> Android</label>
+                        <label class="pm-os-pill" data-os="ios"><input type="radio" name="batchOs" value="ios"><i class="fab fa-apple"></i> iOS</label>
+                    </div>
+                </div>
+                <div style="display:flex;gap:12px;">
+                    <div class="form-group" style="flex:1;"><label>Workers</label><input type="number" id="batchLoginWorkers" value="3" min="1" max="20" style="width:100px;"></div>
+                    <div class="form-group" style="flex:1;">
+                        <label>Stagger Delay (sec)</label>
+                        <input type="number" id="batchLoginStagger" value="3" min="0" max="30" style="width:100px;" title="Delay between worker starts to avoid IP rate-limiting">
+                    </div>
+                    <div class="form-group" style="flex:2;">
+                        <label>Assign Group</label>
+                        <input type="text" id="batchLoginGroup" list="batchLoginGroupList" placeholder="default" autocomplete="off" style="width:100%;">
+                        <datalist id="batchLoginGroupList"></datalist>
+                    </div>
+                </div>
+                <div style="font-size:11px;color:#64748b;margin-top:-4px;margin-bottom:8px;">
+                    <i class="fas fa-info-circle" style="margin-right:4px;"></i>
+                    Stagger delay adds a pause between each worker start to prevent IP-based rate limiting. Recommended: 3-5 sec for proxied logins.
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+                    <button class="btn btn-secondary" id="batchLoginCloseBtn">Cancel</button>
+                    <button class="btn btn-primary" id="batchLoginStartBtn"><i class="fas fa-play"></i> Start</button>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Tools Page -->
+        <div class="page" id="tools">
+            <div class="page-header">
+                <h1>Tools</h1>
+                <p>Screenshots, authenticator files, cleanup, and password management.</p>
+            </div>
+
+            <!-- Tab Bar -->
+            <div class="tools-tabs">
+                <button class="tools-tab active" data-tools-tab="screenshots">
+                    <i class="fas fa-camera"></i> Screenshots
+                </button>
+                <button class="tools-tab" data-tools-tab="authfiles">
+                    <i class="fas fa-key"></i> Authenticator Files
+                </button>
+                <button class="tools-tab" data-tools-tab="cleaner">
+                    <i class="fas fa-trash-alt"></i> Garbage Cleaner
+                </button>
+                <button class="tools-tab" data-tools-tab="totp">
+                    <i class="fas fa-shield-alt"></i> TOTP
+                </button>
+            </div>
+
+            <!-- Screenshots Tab -->
+            <div class="tools-tab-content active" id="toolsTabScreenshots" data-tools-tab-content="screenshots">
+                <div class="card glass">
+                    <div class="tools-search-row">
+                        <div class="search-input-wrap">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="screenshotSearch" placeholder="Search screenshots by filename..." spellcheck="false">
+                        </div>
+                        <span class="tools-count" id="screenshotCount">0 files</span>
+                    </div>
+                    <div class="tools-file-list" id="screenshotList">
+                        <div class="tools-empty"><i class="fas fa-image"></i> No screenshots found</div>
+                    </div>
+                    <div class="tools-pagination" id="screenshotPagination"></div>
+                </div>
+            </div>
+
+            <!-- Auth Files Tab -->
+            <div class="tools-tab-content" id="toolsTabAuthfiles" data-tools-tab-content="authfiles">
+                <div class="card glass">
+                    <div class="tools-search-row">
+                        <div class="search-input-wrap">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="authFileSearch" placeholder="Search auth files by filename..." spellcheck="false">
+                        </div>
+                        <span class="tools-count" id="authFileCount">0 files</span>
+                    </div>
+                    <div class="tools-file-list" id="authFileList">
+                        <div class="tools-empty"><i class="fas fa-file-alt"></i> No authenticator files found</div>
+                    </div>
+                    <div class="tools-pagination" id="authFilePagination"></div>
+                </div>
+            </div>
+
+            <!-- Garbage Cleaner Tab -->
+            <div class="tools-tab-content" id="toolsTabCleaner" data-tools-tab-content="cleaner">
+                <div class="tools-stats-grid">
+                    <div class="card glass tools-stat-card">
+                        <div class="tools-stat-icon"><i class="fas fa-camera"></i></div>
+                        <div class="tools-stat-info">
+                            <div class="tools-stat-label">Screenshots</div>
+                            <div class="tools-stat-value" id="statScreenshots">0 files (0 B)</div>
+                        </div>
+                        <button class="btn btn-danger btn-sm tools-delete-btn" data-cleanup="screenshots">
+                            <i class="fas fa-trash"></i> Delete All
+                        </button>
+                    </div>
+                    <div class="card glass tools-stat-card">
+                        <div class="tools-stat-icon"><i class="fas fa-key"></i></div>
+                        <div class="tools-stat-info">
+                            <div class="tools-stat-label">Authenticator Keys</div>
+                            <div class="tools-stat-value" id="statAuthKeys">0 files (0 B)</div>
+                        </div>
+                        <button class="btn btn-danger btn-sm tools-delete-btn" data-cleanup="authenticator">
+                            <i class="fas fa-trash"></i> Delete All
+                        </button>
+                    </div>
+                    <div class="card glass tools-stat-card">
+                        <div class="tools-stat-icon"><i class="fas fa-shield-alt"></i></div>
+                        <div class="tools-stat-info">
+                            <div class="tools-stat-label">Backup Codes</div>
+                            <div class="tools-stat-value" id="statBackupCodes">0 files (0 B)</div>
+                        </div>
+                        <button class="btn btn-danger btn-sm tools-delete-btn" data-cleanup="backup_codes">
+                            <i class="fas fa-trash"></i> Delete All
+                        </button>
+                    </div>
+                    <div class="card glass tools-stat-card">
+                        <div class="tools-stat-icon"><i class="fas fa-file-alt"></i></div>
+                        <div class="tools-stat-info">
+                            <div class="tools-stat-label">Backend Log</div>
+                            <div class="tools-stat-value" id="statBackendLog">0 B</div>
+                        </div>
+                        <button class="btn btn-danger btn-sm tools-delete-btn" data-cleanup="log">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
+                </div>
+                <div style="text-align:center; margin-top:12px;">
+                    <button class="btn btn-secondary btn-sm" id="refreshStatsBtn">
+                        <i class="fas fa-sync-alt"></i> Refresh Stats
+                    </button>
+                </div>
+            </div>
+
+            <!-- TOTP Tab -->
+            <div class="tools-tab-content" id="toolsTabTotp" data-tools-tab-content="totp">
+                <div class="card glass" style="max-width:520px;">
+                    <h3 style="margin-bottom:16px;"><i class="fas fa-shield-alt"></i> TOTP Authenticator</h3>
+                    <p style="color:var(--text-secondary); font-size:13px; margin-bottom:16px;">
+                        Generate time-based one-time passwords (TOTP) from authenticator secret keys.
+                    </p>
+                    <div class="field-group" style="margin-bottom:16px;">
+                        <label>Authenticator Secret Key</label>
+                        <input type="text" id="toolsTotpSecretInput" placeholder="Paste authenticator key (Base32)..." spellcheck="false" autocomplete="off" style="font-family:'JetBrains Mono',monospace; font-size:13px;">
+                    </div>
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+                        <span id="toolsTotpCode" style="font-family:'JetBrains Mono',monospace; font-size:32px; font-weight:700; color:var(--primary); letter-spacing:6px; flex:1; text-align:center;">------</span>
+                        <button class="btn btn-secondary btn-sm" id="toolsTotpCopyBtn" title="Copy code">
+                            <i class="fas fa-copy"></i> Copy
+                        </button>
+                    </div>
+                    <div style="height:4px; background:rgba(255,255,255,0.05); border-radius:2px; overflow:hidden;">
+                        <div id="toolsTotpTimerBar" style="height:100%; background:var(--primary); border-radius:2px; transition:width 1s linear; width:0%;"></div>
+                    </div>
+                    <p style="color:#94a3b8; font-size:11px; margin-top:8px; text-align:center;">Code refreshes every 30 seconds</p>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- About Page -->
+        <div class="page" id="about">
+            <div class="page-header">
+                <h1>About MailNexus Pro</h1>
+                <p>Version <span id="appVersionText">...</span></p>
+            </div>
+            <div class="about-grid">
+                <div class="card glass about-section">
+                    <h2><i class="fas fa-bolt"></i> Engine Architecture</h2>
+                    <ul class="about-list">
+                        <li><span class="key">Infrastructure:</span><span class="val">Python Flask / Node.js Electron</span></li>
+                        <li><span class="key">Concurrency:</span><span class="val">Up to 10 Headless Ghost Threads</span></li>
+                        <li><span class="key">Speed:</span><span class="val">Approx. 100x Human Equivalent</span></li>
+                    </ul>
+
+                    <div class="disclaimer-box">
+                        <div class="disclaimer-icon"><i class="fas fa-exclamation-triangle"></i></div>
+                        <div class="disclaimer-content">
+                            <h3>Strict Liability Notice</h3>
+                            <p>MailNexus acts as a high-speed automaton. It mimics human interaction indiscriminately. To circumvent bot detection vectors installed by target providers, it is <b>imperative</b> to route traffic via authentic Residential Proxies. The developer assumes zero liability for IP blacklisting, mass bans, or payload attrition.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card glass about-section">
+                    <h2><i class="fas fa-code"></i> Developer Imprint</h2>
+                    <ul class="about-list">
+                        <li><span class="key">Creator:</span><span class="val">Nishath</span></li>
+                        <li><span class="key">Email:</span><span class="val"><a href="mailto:nishatbd3388@gmail.com">nishatbd3388@gmail.com</a></span></li>
+                        <li><span class="key">WhatsApp:</span><span class="val"><a href="https://wa.me/8801797691153" target="_blank">+8801797691153</a> &middot; <a href="https://wa.me/8801767591988" target="_blank">+8801767591988</a></span></li>
+                        <li><span class="key">Facebook:</span><span class="val"><a href="https://www.facebook.com/nishath.khandakar/" target="_blank">@nishath.khandakar</a></span></li>
+                        <li><span class="key">GitHub:</span><span class="val"><a href="https://github.com/mdnishath" target="_blank">@mdnishath</a></span></li>
+                    </ul>
+                </div>
+
+                <!-- Update Check Card -->
+                <div class="card glass about-section">
+                    <h2><i class="fas fa-sync-alt"></i> Software Updates</h2>
+                    <p style="color:var(--text-secondary); font-size:13px; margin-bottom:14px;">Check if a newer version of MailNexus Pro is available.</p>
+                    <button class="btn btn-primary" id="checkUpdateBtn"><i class="fas fa-cloud-download-alt"></i> Check for Updates</button>
+                    <div id="updateResult" style="margin-top:14px; display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Lightbox Modal -->
+    <div class="tools-modal" id="screenshotModal">
+        <div class="tools-modal-overlay"></div>
+        <div class="tools-modal-content tools-modal-image">
+            <button class="tools-modal-close" title="Close"><i class="fas fa-times"></i></button>
+            <img id="screenshotModalImg" src="" alt="Screenshot">
+            <div class="tools-modal-filename" id="screenshotModalName"></div>
+        </div>
+    </div>
+
+    <!-- Text Viewer Modal -->
+    <div class="tools-modal" id="textViewerModal">
+        <div class="tools-modal-overlay"></div>
+        <div class="tools-modal-content tools-modal-text">
+            <div class="tools-modal-header">
+                <span id="textViewerTitle">File Content</span>
+                <div>
+                    <button class="btn btn-sm btn-secondary" id="textViewerCopyBtn" title="Copy"><i class="fas fa-copy"></i> Copy</button>
+                    <button class="tools-modal-close" title="Close"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <pre id="textViewerContent"></pre>
+        </div>
+    </div>
+
+    <!-- Cleanup Confirm Dialog -->
+    <div class="tools-confirm-overlay" id="cleanupConfirmOverlay">
+        <div class="tools-confirm-box">
+            <h3><i class="fas fa-exclamation-triangle"></i> Confirm Deletion</h3>
+            <p id="cleanupConfirmMsg">Are you sure?</p>
+            <div class="tools-confirm-actions">
+                <button class="btn btn-secondary btn-sm" id="cleanupCancelBtn">Cancel</button>
+                <button class="btn btn-danger btn-sm" id="cleanupConfirmBtn"><i class="fas fa-trash"></i> Delete Permanently</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification container -->
+    <div id="toastContainer"></div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- OPERATION PROGRESS PANEL (floating, bottom-right) — RICH      -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div id="opProgressPanel" class="op-panel" style="display:none;">
+        <!-- Header row -->
+        <div class="op-panel-header">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;">
+                <div id="opProgressIconWrap" class="op-icon-wrap">
+                    <i id="opProgressIcon" class="fas fa-gavel"></i>
+                </div>
+                <div>
+                    <div id="opProgressLabel" class="op-label">Operation</div>
+                    <div id="opProgressSublabel" class="op-sublabel">Starting...</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span id="opProgressTimer" class="op-timer">00:00</span>
+                <span id="opProgressPct" class="op-pct">0%</span>
+            </div>
+        </div>
+        <!-- Progress bar -->
+        <div class="op-bar-track">
+            <div id="opProgressBar" class="op-bar-fill"></div>
+        </div>
+        <!-- Stats row -->
+        <div class="op-stats-row" id="opStatsRow">
+            <div class="op-stat" id="opStatTotal">
+                <span class="op-stat-val">0</span>
+                <span class="op-stat-lbl">Total</span>
+            </div>
+            <div class="op-stat op-stat-success" id="opStatSuccess">
+                <span class="op-stat-val">0</span>
+                <span class="op-stat-lbl">Success</span>
+            </div>
+            <div class="op-stat op-stat-fail" id="opStatFailed">
+                <span class="op-stat-val">0</span>
+                <span class="op-stat-lbl">Failed</span>
+            </div>
+            <div class="op-stat" id="opStatPending">
+                <span class="op-stat-val">0</span>
+                <span class="op-stat-lbl">Remaining</span>
+            </div>
+        </div>
+        <!-- Footer -->
+        <div class="op-footer">
+            <span id="opProgressCount" class="op-count">0 / 0</span>
+            <button id="opStopBtn" class="btn btn-sm op-stop-btn">
+                <i class="fas fa-stop"></i> Stop
+            </button>
+        </div>
+    </div>
+
+    <!-- Review Report Ready Bar (appears after write review completes) -->
+    <div id="reviewReportBar" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9998;background:#0f2b1e;border:1px solid #22c55e;border-radius:10px;padding:12px 20px;min-width:420px;max-width:600px;box-shadow:0 8px 40px rgba(0,0,0,0.8);align-items:center;gap:14px;">
+        <i class="fas fa-file-excel" style="color:#22c55e;font-size:16px;flex-shrink:0;"></i>
+        <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:700;color:#22c55e;margin-bottom:2px;">REVIEW REPORT READY</div>
+            <div id="reviewReportPath" style="font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="Click to open report location"></div>
+        </div>
+        <button id="reviewReportOpenBtn" class="btn btn-sm" style="background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.4);font-size:12px;padding:5px 14px;border-radius:6px;white-space:nowrap;flex-shrink:0;"><i class="fas fa-folder-open"></i> Open</button>
+        <button id="reviewReportDismissBtn" style="background:none;border:none;color:#475569;font-size:16px;cursor:pointer;flex-shrink:0;line-height:1;padding:0 4px;">×</button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- APPEAL MODAL                                                   -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div id="appealModal" class="pm-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="max-width:620px;max-height:88vh;display:flex;flex-direction:column;">
+            <div class="pm-modal-header">
+                <h3><i class="fas fa-gavel" style="color:#f59e0b;margin-right:8px;"></i>Run Appeal</h3>
+                <button class="pm-modal-close" id="appealModalClose">&times;</button>
+            </div>
+            <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:#0e0e0e;">
+                <!-- Mode toggle -->
+                <div style="display:flex;gap:4px;background:#1a1a1a;border-radius:8px;padding:3px;">
+                    <button class="btn btn-sm appeal-mode-btn active" id="appealModeSelectBtn" data-mode="select"
+                        style="font-size:11px;padding:5px 12px;border-radius:6px;border:none;cursor:pointer;">
+                        <i class="fas fa-list"></i> Select
+                    </button>
+                    <button class="btn btn-sm appeal-mode-btn" id="appealModeExcelBtn" data-mode="excel"
+                        style="font-size:11px;padding:5px 12px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:#94a3b8;">
+                        <i class="fas fa-file-excel"></i> Upload Excel
+                    </button>
+                </div>
+                <span id="appealModeHint" style="font-size:13px;color:#94a3b8;flex:1;">Select profiles to run Appeal on.</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Workers:</label>
+                    <input type="number" id="appealWorkers" value="3" min="1" max="10" style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
+                </div>
+            </div>
+            <!-- SELECT mode controls -->
+            <div id="appealSelectControls">
+                <div style="padding:6px 12px;border-bottom:1px solid var(--border);background:#0e0e0e;display:flex;gap:8px;align-items:center;">
+                    <input type="text" id="appealSearchInput" placeholder="&#xf002;  Search profiles..." class="modal-search-input" style="flex:1;">
+                    <select id="appealGroupFilter" style="background:#1a1a1a;border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px;min-width:130px;">
+                        <option value="">All Groups</option>
+                    </select>
+                </div>
+                <div style="padding:7px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;background:#0e0e0e;">
+                    <button class="btn btn-sm btn-secondary" id="appealSelectAll">Select All</button>
+                    <button class="btn btn-sm btn-secondary" id="appealDeselectAll">Deselect All</button>
+                    <span style="margin-left:auto;font-size:12px;color:#94a3b8;"><span id="appealSelectedCount" style="color:#e2e8f0;font-weight:600;">0</span> selected</span>
+                </div>
+            </div>
+            <!-- EXCEL upload mode controls -->
+            <div id="appealExcelControls" style="display:none;">
+                <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:#0e0e0e;">
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <button class="btn btn-sm btn-secondary" id="appealExcelBrowseBtn" style="white-space:nowrap;">
+                            <i class="fas fa-folder-open"></i> Browse Excel
+                        </button>
+                        <span id="appealExcelFileName" style="font-size:12px;color:#64748b;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">No file selected</span>
+                    </div>
+                    <div id="appealExcelMatchInfo" style="display:none;margin-top:10px;padding:10px 12px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;">
+                    </div>
+                </div>
+            </div>
+            <!-- Profile list (shared by both modes) -->
+            <div id="appealProfileList" style="flex:1;overflow-y:auto;padding:10px 14px;">
+                <div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px;">Loading profiles...</div>
+            </div>
+            <div class="pm-modal-footer">
+                <button class="btn btn-secondary" id="appealModalCancelBtn">Cancel</button>
+                <button class="btn btn-primary" id="appealModalStartBtn" style="background:#f59e0b;border-color:#f59e0b;"><i class="fas fa-gavel"></i> Start Appeal</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- HEALTH ACTIVITY MODAL                                          -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div id="healthModal" class="pm-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="max-width:1000px;max-height:88vh;display:flex;flex-direction:column;">
+            <div class="pm-modal-header">
+                <h3><i class="fas fa-heartbeat" style="color:#22c55e;margin-right:8px;"></i>Health Activity</h3>
+                <button class="pm-modal-close" id="healthModalClose">&times;</button>
+            </div>
+            <!-- Mode Toggle: Smart vs Manual -->
+            <div style="padding:8px 20px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;background:#0e0e0e;">
+                <button class="btn btn-sm health-mode-btn active" id="healthModeSmartBtn" data-mode="smart"
+                    style="background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.4);font-size:11px;padding:5px 14px;">
+                    <i class="fas fa-brain"></i> Smart (Recommended)
+                </button>
+                <button class="btn btn-sm health-mode-btn" id="healthModeManualBtn" data-mode="manual"
+                    style="background:rgba(255,255,255,0.04);color:#94a3b8;border:1px solid rgba(255,255,255,0.1);font-size:11px;padding:5px 14px;">
+                    <i class="fas fa-sliders-h"></i> Manual
+                </button>
+                <div style="flex:1;"></div>
+                <span style="font-size:11px;color:#475569;">Activities run in random order with human-like delays</span>
+            </div>
+            <div style="padding:8px 20px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:0;padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Country:</label>
+                        <select id="healthCountry" style="background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;">
+                            <option value="US">🇺🇸 English (US)</option>
+                            <option value="FR">🇫🇷 French (FR)</option>
+                            <option value="IN">🇮🇳 Hindi/English (IN)</option>
+                            <option value="BD">🇧🇩 Bengali (BD)</option>
+                            <option value="DE">🇩🇪 German (DE)</option>
+                            <option value="ES">🇪🇸 Spanish (ES)</option>
+                            <option value="IT">🇮🇹 Italian (IT)</option>
+                            <option value="PT">🇵🇹 Portuguese (PT)</option>
+                            <option value="TR">🇹🇷 Turkish (TR)</option>
+                            <option value="PL">🇵🇱 Polish (PL)</option>
+                            <option value="NL">🇳🇱 Dutch (NL)</option>
+                            <option value="RU">🇷🇺 Russian (RU)</option>
+                            <option value="JP">🇯🇵 Japanese (JP)</option>
+                            <option value="KR">🇰🇷 Korean (KR)</option>
+                            <option value="BR">🇧🇷 Portuguese (BR)</option>
+                            <option value="MX">🇲🇽 Spanish (MX)</option>
+                            <option value="AR">🇦🇷 Spanish (AR)</option>
+                            <option value="SA">🇸🇦 Arabic (SA)</option>
+                            <option value="AE">🇦🇪 Arabic (AE)</option>
+                            <option value="EG">🇪🇬 Arabic (EG)</option>
+                            <option value="NG">🇳🇬 English (NG)</option>
+                            <option value="ZA">🇿🇦 English (ZA)</option>
+                            <option value="AU">🇦🇺 English (AU)</option>
+                            <option value="CA">🇨🇦 English (CA)</option>
+                            <option value="GB">🇬🇧 English (GB)</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Workers:</label>
+                        <input type="number" id="healthWorkers" value="3" min="1" max="10" style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Rounds:</label>
+                        <input type="number" id="healthRounds" value="1" min="1" max="10" title="Repeat all activities N times" style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Duration:</label>
+                        <input type="number" id="healthDuration" value="0" min="0" max="120" title="Min minutes per profile. 0 = no time limit (just finish activities). If activities finish early, random ones fill remaining time." style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
+                        <span style="font-size:10px;color:#475569;">min</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Split: Profiles (left) + Activities (right) -->
+            <div style="display:flex;flex:1;overflow:hidden;min-height:0;">
+
+                <!-- LEFT: Profile List -->
+                <div style="width:300px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;">
+                    <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center;background:#161616;">
+                        <span style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.8px;flex:1;">Profiles</span>
+                        <button class="btn btn-sm btn-secondary" id="healthProfileSelectAll" style="font-size:10px;padding:2px 8px;">All</button>
+                        <button class="btn btn-sm btn-secondary" id="healthProfileDeselectAll" style="font-size:10px;padding:2px 8px;">None</button>
+                    </div>
+                    <div style="padding:5px 8px;border-bottom:1px solid var(--border);background:#0e0e0e;display:flex;gap:6px;align-items:center;">
+                        <input type="text" id="healthProfileSearchInput" placeholder="&#xf002;  Search..." class="modal-search-input" style="font-size:11px;padding:5px 8px;flex:1;">
+                        <select id="healthGroupFilter" style="background:#1a1a1a;border:1px solid var(--border);border-radius:5px;padding:4px 6px;color:var(--text);font-size:11px;min-width:110px;">
+                            <option value="">All Groups</option>
+                        </select>
+                    </div>
+                    <div style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:11px;color:#94a3b8;background:#0e0e0e;">
+                        <span id="healthProfileCount" style="color:#e2e8f0;font-weight:600;">0</span> selected
+                    </div>
+                    <div id="healthProfileList" style="flex:1;overflow-y:auto;padding:6px 8px;">
+                        <div style="color:#94a3b8;font-size:12px;text-align:center;padding:20px;">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- RIGHT: Activities -->
+                <div style="flex:1;overflow-y:auto;padding:14px 16px;">
+
+                    <!-- ═══ SMART MODE PANEL ═══ -->
+                    <div id="healthSmartPanel">
+                        <div style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:10px;padding:14px 16px;margin-bottom:14px;">
+                            <div style="font-size:12px;font-weight:700;color:#4ade80;margin-bottom:10px;"><i class="fas fa-brain" style="margin-right:6px;"></i> Smart Activity — Select Your Goal</div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                                <label class="health-smart-goal" style="--accent:#22c55e;">
+                                    <input type="radio" name="healthSmartGoal" value="gmail_trust" checked>
+                                    <div class="health-smart-card">
+                                        <i class="fas fa-shield-alt"></i>
+                                        <div>
+                                            <strong>Gmail Trust</strong>
+                                            <span>Build account trust score — Search, Gmail, YouTube, Maps, Drive, Account settings</span>
+                                        </div>
+                                    </div>
+                                </label>
+                                <label class="health-smart-goal" style="--accent:#f59e0b;">
+                                    <input type="radio" name="healthSmartGoal" value="review_ready">
+                                    <div class="health-smart-card">
+                                        <i class="fas fa-star"></i>
+                                        <div>
+                                            <strong>Review Ready</strong>
+                                            <span>Prepare for posting reviews — Maps, local search, reviews, photos, business browsing</span>
+                                        </div>
+                                    </div>
+                                </label>
+                                <label class="health-smart-goal" style="--accent:#8b5cf6;">
+                                    <input type="radio" name="healthSmartGoal" value="review_sticky">
+                                    <div class="health-smart-card">
+                                        <i class="fas fa-thumbtack"></i>
+                                        <div>
+                                            <strong>Review Sticky</strong>
+                                            <span>After posting review — heavy Maps + local activity to make review stick</span>
+                                        </div>
+                                    </div>
+                                </label>
+                                <label class="health-smart-goal" style="--accent:#3b82f6;">
+                                    <input type="radio" name="healthSmartGoal" value="full_warmup">
+                                    <div class="health-smart-card">
+                                        <i class="fas fa-fire"></i>
+                                        <div>
+                                            <strong>Full Warmup</strong>
+                                            <span>Maximum trust — all Google services, long sessions, deep browsing</span>
+                                        </div>
+                                    </div>
+                                </label>
+                                <label class="health-smart-goal" style="--accent:#06b6d4;">
+                                    <input type="radio" name="healthSmartGoal" value="local_presence">
+                                    <div class="health-smart-card">
+                                        <i class="fas fa-map-marker-alt"></i>
+                                        <div>
+                                            <strong>Local Presence</strong>
+                                            <span>Build local authority — Maps, local search, nearby businesses, directions</span>
+                                        </div>
+                                    </div>
+                                </label>
+                                <label class="health-smart-goal" style="--accent:#ec4899;">
+                                    <input type="radio" name="healthSmartGoal" value="social_engage">
+                                    <div class="health-smart-card">
+                                        <i class="fas fa-users"></i>
+                                        <div>
+                                            <strong>Social Engage</strong>
+                                            <span>YouTube watch + comment, News reading, Shopping — social signals</span>
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
+                            <div style="margin-top:12px;font-size:11px;color:#64748b;display:flex;align-items:center;gap:8px;">
+                                <i class="fas fa-info-circle"></i>
+                                Smart mode auto-selects the best activities, duration, and order for your goal. Set duration above (recommended: 5-15 min).
+                            </div>
+                        </div>
+                        <!-- GMB for Smart mode -->
+                        <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.2);border-radius:8px;padding:10px 12px;margin-bottom:14px;">
+                            <div style="font-size:11px;font-weight:700;color:#a78bfa;margin-bottom:6px;"><i class="fas fa-map-marker-alt" style="margin-right:4px;"></i> Target Business (optional)</div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                <input type="text" id="healthSmartGmbName" placeholder="Business name" style="background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(139,92,246,0.3);border-radius:6px;padding:5px 10px;font-size:12px;">
+                                <input type="text" id="healthSmartGmbAddress" placeholder="Address / city" style="background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(139,92,246,0.3);border-radius:6px;padding:5px 10px;font-size:12px;">
+                            </div>
+                            <div style="font-size:10px;color:#64748b;margin-top:4px;">Activities will focus around this business and location. Uses profile address if empty.</div>
+                        </div>
+                    </div>
+
+                    <!-- ═══ MANUAL MODE PANEL ═══ -->
+                    <div id="healthManualPanel" style="display:none;">
+                    <!-- Custom GMB Activity -->
+                    <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.2);border-radius:8px;padding:10px 12px;margin-bottom:14px;">
+                        <div style="font-size:11px;font-weight:700;color:#a78bfa;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;"><i class="fas fa-map-marker-alt" style="margin-right:4px;"></i> Custom GMB Activity</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                            <input type="text" id="healthGmbName" placeholder="Business name (e.g. Pizza Palace)" style="background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(139,92,246,0.3);border-radius:6px;padding:5px 10px;font-size:12px;">
+                            <input type="text" id="healthGmbAddress" placeholder="Address (e.g. 15 Rue de Rivoli, Paris)" style="background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(139,92,246,0.3);border-radius:6px;padding:5px 10px;font-size:12px;">
+                        </div>
+                        <div style="font-size:10px;color:#64748b;margin-top:4px;">Fill both to auto-add GMB search, maps exploration, and nearby activity around this business.</div>
+                    </div>
+                    <div style="display:flex;gap:6px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
+                        <span style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.8px;flex:1;">Activities — <span id="healthSelectedCount" style="color:#e2e8f0;">9</span> selected</span>
+                        <button class="btn btn-sm btn-secondary" id="healthSelectAll" style="font-size:10px;padding:2px 8px;">All</button>
+                        <button class="btn btn-sm btn-secondary" id="healthDeselectAll" style="font-size:10px;padding:2px 8px;">None</button>
+                        <div style="width:1px;height:16px;background:rgba(255,255,255,0.1);margin:0 2px;"></div>
+                        <input type="number" id="healthRandomCount" value="5" min="1" max="50" title="How many random activities to pick"
+                            style="width:44px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(139,92,246,0.4);border-radius:5px;padding:2px 6px;font-size:11px;text-align:center;">
+                        <button class="btn btn-sm" id="healthRandomPick"
+                            style="font-size:10px;padding:2px 10px;background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.4);"
+                            title="Randomly pick N activities from the full list">
+                            <i class="fas fa-random"></i> Random
+                        </button>
+                    </div>
+
+                    <!-- Google Search (40 activities) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fab fa-google" style="color:#4285f4;"></i> Google Search</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="search_restaurants" checked> Restaurants</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_news" checked> News</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_weather" checked> Weather</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_movies"> Movies</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_sports"> Sports</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_tech"> Technology</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_travel"> Travel</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_recipes"> Recipes</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_products"> Products</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_local"> Local biz</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_music"> Music</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_gardening"> Gardening</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_photography"> Photography</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_astronomy"> Astronomy</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_history"> History</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_science"> Science</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_books"> Books</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_art"> Art</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_cooking"> Cooking</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_parenting"> Parenting</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_psychology"> Psychology</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_philosophy"> Philosophy</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_architecture"> Architecture</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_interior_design"> Interior design</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_marketing"> Marketing</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_startups"> Startups</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_programming"> Programming</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_ai"> AI / ML</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_space"> Space</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_environment"> Environment</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_crypto"> Crypto</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_finance"> Finance</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_fashion"> Fashion</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_beauty"> Beauty</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_jobs"> Jobs</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_education"> Education</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_fitness"> Fitness</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_health"> Health</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_food"> Food</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_realestate"> Real estate</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_pets"> Pets</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_diy"> DIY</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_cars"> Cars</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_podcasts"> Podcasts</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_anime"> Anime</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_gaming"> Gaming</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_camping"> Camping</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_cycling"> Cycling</label>
+                        </div>
+                    </div>
+                    <!-- Gmail (10 activities) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fas fa-envelope" style="color:#ea4335;"></i> Gmail</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="gmail_inbox" checked> Check inbox</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_read_email" checked> Read emails</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_check_spam"> Check spam</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_check_sent"> Check sent</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_scroll_inbox"> Scroll inbox</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_search_email"> Search email</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_compose_draft"> Compose draft</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_star_email"> Star emails</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_labels"> Browse labels</label>
+                            <label class="health-act-item"><input type="checkbox" value="gmail_contacts"> Contacts</label>
+                        </div>
+                    </div>
+                    <!-- YouTube (20 activities) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fab fa-youtube" style="color:#ff0000;"></i> YouTube</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="youtube_browse_feed" checked> Browse feed</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_trending"> Trending</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_search_music"> Music</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_shorts"> Shorts</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_subscriptions"> Subscriptions</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_watch_video"> Watch video</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_gaming"> Gaming</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_cooking"> Cooking</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_news"> News</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_education"> Education</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_tech_review"> Tech review</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_vlogs"> Vlogs</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_sports"> Sports</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_music_playlist"> Playlists</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_diy"> DIY</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_travel"> Travel</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_fitness"> Fitness</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_comedy"> Comedy</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_documentary"> Documentary</label>
+                            <label class="health-act-item"><input type="checkbox" value="youtube_asmr"> ASMR</label>
+                        </div>
+                    </div>
+                    <!-- Google Maps (22 activities) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fas fa-map-marked-alt" style="color:#34a853;"></i> Google Maps</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="maps_search_restaurants" checked> Restaurants</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_directions"> Directions</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_browse_places"> Browse places</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_view_photos"> Photos</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_read_reviews"> Reviews</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_street_view"> Street view</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_gas_stations"> Gas stations</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_hotels"> Hotels</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_hospitals"> Hospitals</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_parks"> Parks</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_shopping_malls"> Malls</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_coffee_shops"> Coffee shops</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_gyms"> Gyms</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_atms"> ATMs</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_pharmacies"> Pharmacies</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_schools"> Schools</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_banks"> Banks</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_supermarkets"> Supermarkets</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_libraries"> Libraries</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_museums"> Museums</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_theaters"> Theaters</label>
+                            <label class="health-act-item"><input type="checkbox" value="maps_car_wash"> Car wash</label>
+                        </div>
+                    </div>
+                    <!-- Google News (11 activities) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fas fa-newspaper" style="color:#00bcd4;"></i> Google News</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="news_headlines" checked> Headlines</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_tech"> Tech</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_sports"> Sports</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_entertainment"> Entertainment</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_business"> Business</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_health"> Health</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_science"> Science</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_world"> World</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_politics"> Politics</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_environment"> Environment</label>
+                            <label class="health-act-item"><input type="checkbox" value="news_education"> Education</label>
+                        </div>
+                    </div>
+                    <!-- Google Shopping (12 activities) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fas fa-shopping-cart" style="color:#f9ab00;"></i> Shopping</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="shopping_electronics"> Electronics</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_clothing"> Clothing</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_compare"> Compare</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_deals"> Deals</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_home"> Home</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_beauty"> Beauty</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_sports"> Sports</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_toys"> Toys</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_books"> Books</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_garden"> Garden</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_automotive"> Automotive</label>
+                            <label class="health-act-item"><input type="checkbox" value="shopping_jewelry"> Jewelry</label>
+                        </div>
+                    </div>
+                    <!-- Drive + Account + Photos + Other (combined) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fas fa-th" style="color:#94a3b8;"></i> Drive, Account, Photos &amp; Other</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="drive_browse"> Drive: Browse</label>
+                            <label class="health-act-item"><input type="checkbox" value="drive_recent"> Drive: Recent</label>
+                            <label class="health-act-item"><input type="checkbox" value="drive_shared"> Drive: Shared</label>
+                            <label class="health-act-item"><input type="checkbox" value="drive_new_doc"> Drive: New doc</label>
+                            <label class="health-act-item"><input type="checkbox" value="drive_search"> Drive: Search</label>
+                            <label class="health-act-item"><input type="checkbox" value="drive_trash"> Drive: Trash</label>
+                            <label class="health-act-item"><input type="checkbox" value="drive_starred"> Drive: Starred</label>
+                            <label class="health-act-item"><input type="checkbox" value="account_security"> Security</label>
+                            <label class="health-act-item"><input type="checkbox" value="account_activity"> Activity</label>
+                            <label class="health-act-item"><input type="checkbox" value="account_profile"> Profile</label>
+                            <label class="health-act-item"><input type="checkbox" value="account_privacy"> Privacy</label>
+                            <label class="health-act-item"><input type="checkbox" value="account_storage"> Storage</label>
+                            <label class="health-act-item"><input type="checkbox" value="account_payments"> Payments</label>
+                            <label class="health-act-item"><input type="checkbox" value="account_data_export"> Data export</label>
+                            <label class="health-act-item"><input type="checkbox" value="photos_browse"> Photos</label>
+                            <label class="health-act-item"><input type="checkbox" value="photos_albums"> Albums</label>
+                            <label class="health-act-item"><input type="checkbox" value="photos_favorites"> Favorites</label>
+                            <label class="health-act-item"><input type="checkbox" value="photos_archive"> Archive</label>
+                            <label class="health-act-item"><input type="checkbox" value="translate_phrases"> Translate</label>
+                            <label class="health-act-item"><input type="checkbox" value="calendar_view"> Calendar</label>
+                            <label class="health-act-item"><input type="checkbox" value="keep_browse"> Keep</label>
+                            <label class="health-act-item"><input type="checkbox" value="play_browse_apps"> Play Store</label>
+                            <label class="health-act-item"><input type="checkbox" value="meet_check"> Meet</label>
+                            <label class="health-act-item"><input type="checkbox" value="contacts_browse"> Contacts</label>
+                            <label class="health-act-item"><input type="checkbox" value="blogger_browse"> Blogger</label>
+                            <label class="health-act-item"><input type="checkbox" value="forms_browse"> Forms</label>
+                        </div>
+                    </div>
+                    <!-- Trending (remaining search topics) -->
+                    <div class="health-cat">
+                        <div class="health-cat-title"><i class="fas fa-rss" style="color:#f97316;"></i> More Topics</div>
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">
+                            <label class="health-act-item"><input type="checkbox" value="search_news_world"> World news</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_tech_news"> Tech news</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_sports_news"> Sports news</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_shopping"> Shopping deals</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_manga"> Manga</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_board_games"> Board games</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_fishing"> Fishing</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_comedy"> Comedy</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_documentaries"> Documentaries</label>
+                            <label class="health-act-item"><input type="checkbox" value="search_politics"> Politics</label>
+                            <label class="health-act-item"><input type="checkbox" value="sites_browse"> Google Sites</label>
+                        </div>
+                    </div>
+                    </div><!-- end healthManualPanel -->
+                </div><!-- end right activities -->
+            </div><!-- end split -->
+
+            <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;background:rgba(255,255,255,0.02);">
+                <div style="flex:1;font-size:12px;color:#94a3b8;">
+                    <span id="healthProfileCountFooter">0</span> profiles &nbsp;·&nbsp; <span id="healthSelectedCount2">9</span> activities
+                </div>
+                <button class="btn btn-secondary" id="healthModalCancelBtn">Cancel</button>
+                <button class="btn btn-primary" id="healthModalStartBtn"><i class="fas fa-play"></i> Start Health</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- Run Ops Modal -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div id="runOpsModal" class="pm-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="max-width:1050px;max-height:90vh;display:flex;flex-direction:column;">
+            <!-- Header -->
+            <div class="pm-modal-header">
+                <h3><i class="fas fa-cogs" style="color:#6366f1;margin-right:8px;"></i> Run Operations</h3>
+                <button class="pm-modal-close" id="runOpsModalClose">&times;</button>
+            </div>
+
+            <!-- Body: split layout -->
+            <div style="display:flex;flex:1;overflow:hidden;min-height:0;">
+                <!-- LEFT: Profile selection -->
+                <div style="width:300px;border-right:1px solid var(--border);display:flex;flex-direction:column;">
+                    <!-- Workers + Stagger -->
+                    <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
+                        <label style="font-size:11px;color:#94a3b8;white-space:nowrap;">Workers:</label>
+                        <input type="number" id="runOpsWorkers" value="5" min="1" max="10" style="background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:4px 6px;color:#e2e8f0;font-size:12px;width:50px;">
+                        <label style="font-size:11px;color:#94a3b8;white-space:nowrap;">Stagger:</label>
+                        <input type="number" id="runOpsStagger" value="3" min="0" max="30" style="background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:4px 6px;color:#e2e8f0;font-size:12px;width:50px;" title="Seconds between worker launches">
+                        <span style="font-size:10px;color:#64748b;">sec</span>
+                    </div>
+                    <!-- Search + Group filter -->
+                    <div style="padding:5px 8px;border-bottom:1px solid var(--border);display:flex;gap:6px;">
+                        <input id="runOpsSearchInput" class="modal-search-input" placeholder="Search profiles..." style="flex:1;">
+                        <select id="runOpsGroupFilter" style="background:#0f1629;border:1px solid var(--border);border-radius:5px;padding:4px;color:#e2e8f0;font-size:11px;max-width:100px;">
+                            <option value="">All Groups</option>
+                        </select>
+                    </div>
+                    <!-- Select controls -->
+                    <div style="padding:5px 8px;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center;">
+                        <button class="btn btn-sm" id="runOpsSelectAll" style="font-size:10px;padding:2px 8px;">All</button>
+                        <button class="btn btn-sm" id="runOpsDeselectAll" style="font-size:10px;padding:2px 8px;">None</button>
+                        <span style="font-size:11px;color:#a5b4fc;margin-left:auto;"><span id="runOpsSelectedCount">0</span> selected</span>
+                    </div>
+                    <!-- Profile list -->
+                    <div id="runOpsProfileList" style="flex:1;overflow-y:auto;padding:4px;"></div>
+                </div>
+
+                <!-- RIGHT: Operations + Parameters -->
+                <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+                    <!-- Step tabs -->
+                    <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;">
+                        <button class="btn btn-sm runops-step-tab active" data-step="2" style="font-size:11px;">
+                            <i class="fas fa-shield-alt"></i> Step 2 — Security
+                        </button>
+                        <button class="btn btn-sm runops-step-tab" data-step="1" style="font-size:11px;">
+                            <i class="fas fa-globe"></i> Step 1 — Language
+                        </button>
+                        <button class="btn btn-sm runops-step-tab" data-step="3" style="font-size:11px;">
+                            <i class="fas fa-map-marker-alt"></i> Step 3 — Reviews
+                        </button>
+                        <button class="btn btn-sm runops-step-tab" data-step="4" style="font-size:11px;">
+                            <i class="fas fa-gavel"></i> Step 4 — Appeals
+                        </button>
+                    </div>
+
+                    <!-- Operations list (scrollable) -->
+                    <div style="flex:1;overflow-y:auto;padding:10px 14px;">
+                        <!-- STEP 2 ops -->
+                        <div id="runOpsStep2" class="runops-step-panel">
+                            <div class="runops-cat">Password & Recovery</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="1"> Change Password</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="2a"> Add Recovery Phone</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="2b"> Remove Recovery Phone</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="3a"> Add Recovery Email</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="3b"> Remove Recovery Email</label>
+                            </div>
+                            <div class="runops-cat">2FA & Authenticator</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="10a"> Enable 2FA</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="10b"> Disable 2FA</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="6a"> Add 2FA Phone</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="6b"> Remove 2FA Phone</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="4a"> Change Authenticator (TOTP)</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="4b"> Remove Authenticator</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="5a"> Generate Backup Codes</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="5b"> Remove Backup Codes</label>
+                            </div>
+                            <div class="runops-cat">Account</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="8"> Change Name</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="7"> Remove All Devices</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="9"> Security Checkup</label>
+                            </div>
+                        </div>
+
+                        <!-- STEP 1 ops -->
+                        <div id="runOpsStep1" class="runops-step-panel" style="display:none;">
+                            <div class="runops-cat">Language & Activity</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L1"> Change Language to English</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L2"> Fix Activity</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L4"> Enable Safe Browsing</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L5"> Disable Safe Browsing</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L6"> Check Maps Usage</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L7"> Get Gmail Creation Year</label>
+                            </div>
+                        </div>
+
+                        <!-- STEP 3 ops -->
+                        <div id="runOpsStep3" class="runops-step-panel" style="display:none;">
+                            <div class="runops-cat">Maps Reviews</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R1"> Delete All Reviews</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R2"> Delete Non-Posted Reviews</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R4"> Lock Profile</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R5"> Unlock Profile</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R6"> Get Review Link</label>
+                            </div>
+                        </div>
+
+                        <!-- STEP 4 ops -->
+                        <div id="runOpsStep4" class="runops-step-panel" style="display:none;">
+                            <div class="runops-cat">Appeals</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="A1"> Do All Appeals</label>
+                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="A2"> Delete Refused Appeals</label>
+                            </div>
+                        </div>
+
+                        <!-- PARAMETERS (dynamic — shown based on selected ops) -->
+                        <div id="runOpsParams" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+                            <div class="runops-cat">Parameters</div>
+                            <div id="runOpsParamPassword" style="display:none;margin-bottom:8px;">
+                                <label style="font-size:11px;color:#94a3b8;">New Password:</label>
+                                <input type="text" id="runOpsNewPassword" placeholder="New password for all selected profiles"
+                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
+                            </div>
+                            <div id="runOpsParamRecoveryPhone" style="display:none;margin-bottom:8px;">
+                                <label style="font-size:11px;color:#94a3b8;">Recovery Phone (comma-separated for round-robin):</label>
+                                <input type="text" id="runOpsRecoveryPhone" placeholder="+1234567890, +0987654321"
+                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
+                            </div>
+                            <div id="runOpsParamRecoveryEmail" style="display:none;margin-bottom:8px;">
+                                <label style="font-size:11px;color:#94a3b8;">Recovery Email (comma-separated for round-robin, max 10 per email):</label>
+                                <input type="text" id="runOpsRecoveryEmail" placeholder="recovery1@gmail.com, recovery2@gmail.com"
+                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
+                            </div>
+                            <div id="runOpsParam2FAPhone" style="display:none;margin-bottom:8px;">
+                                <label style="font-size:11px;color:#94a3b8;">2FA Phone (comma-separated for round-robin):</label>
+                                <input type="text" id="runOps2FAPhone" placeholder="+1234567890"
+                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
+                            </div>
+                            <div id="runOpsParamNames" style="display:none;margin-bottom:8px;">
+                                <label style="font-size:11px;color:#94a3b8;">Name List (one per line: FirstName LastName):</label>
+                                <div style="display:flex;gap:6px;margin-top:3px;margin-bottom:4px;">
+                                    <select id="runOpsNameCountry" style="background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:4px 8px;color:#e2e8f0;font-size:11px;">
+                                        <option value="US">US</option><option value="UK">UK</option><option value="FR">FR</option>
+                                        <option value="DE">DE</option><option value="BD">BD</option><option value="IN">IN</option>
+                                        <option value="BR">BR</option><option value="TR">TR</option><option value="PK">PK</option>
+                                        <option value="ID">ID</option><option value="PH">PH</option>
+                                    </select>
+                                    <button class="btn btn-sm" id="runOpsLoadNamesBtn" style="font-size:10px;">
+                                        <i class="fas fa-file-upload"></i> Load from File
+                                    </button>
+                                    <input type="file" id="runOpsNameFileInput" accept=".txt,.csv,.xlsx" style="display:none;">
+                                    <span style="font-size:10px;color:#64748b;align-self:center;">Leave empty for random names by country</span>
+                                </div>
+                                <textarea id="runOpsNameList" rows="4" placeholder="John Smith&#10;Jane Doe&#10;Ali Ahmed"
+                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;resize:vertical;"></textarea>
+                            </div>
+                            <div id="runOpsNoParams" style="color:#64748b;font-size:12px;font-style:italic;">
+                                Select operations above to see parameter inputs.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="pm-modal-footer">
+                <button class="btn btn-secondary" id="runOpsModalCancelBtn">Cancel</button>
+                <button class="btn btn-primary" id="runOpsModalStartBtn"><i class="fas fa-play"></i> Run Operations</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module files loaded first (order matters: auth first, logs, then others, app.js last) -->
+    <script src="modules/auth.js"></script>
+    <script src="modules/logs.js"></script>
+    <script src="modules/server.js"></script>
+    <script src="modules/processing.js"></script>
+    <script src="modules/config.js"></script>
+    <script src="modules/reports.js"></script>
+    <!-- Write Review Modal -->
+    <div id="writeReviewModalOverlay" class="profile-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="width:480px;">
+            <div class="pm-modal-header">
+                <h3><i class="fas fa-star" style="color:#f59e0b;"></i> Write Review</h3>
+                <button class="pm-modal-close" id="writeReviewCloseBtn">×</button>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px;">
+                <div>
+                    <label style="font-size:12px;color:#94a3b8;display:block;margin-bottom:6px;">Excel File <span style="color:#64748b;">(Email · GMB URL · Review Text · Review Stars)</span></label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="text" id="writeReviewFilePath" placeholder="reviews.xlsx" style="flex:1;background:#111;border:1px solid #3b4fd8;border-radius:6px;padding:7px 12px;color:#e2e8f0;font-size:13px;">
+                        <button class="btn btn-secondary btn-sm" id="writeReviewBrowseBtn"><i class="fas fa-folder-open"></i></button>
+                    </div>
+                    <div id="writeReviewPreview" style="display:none;margin-top:8px;padding:8px 12px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:6px;font-size:12px;gap:10px;flex-wrap:wrap;align-items:center;"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Workers</label>
+                    <input type="number" id="writeReviewWorkers" value="3" min="1" max="10" style="width:70px;background:#111;border:1px solid #475569;border-radius:6px;padding:5px 8px;color:#e2e8f0;font-size:13px;">
+                    <span style="font-size:11px;color:#475569;">Profiles are matched automatically by email from the Excel file.</span>
+                </div>
+            </div>
+            <div class="pm-modal-footer" style="justify-content:space-between;">
+                <button class="btn btn-sm" id="writeReviewTemplateBtn"
+                    style="background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.3);"
+                    title="Download example Excel template showing how to prepare your review sheet">
+                    <i class="fas fa-file-download"></i> Export Template
+                </button>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-secondary" id="writeReviewCancelBtn">Cancel</button>
+                    <button class="btn btn-primary" id="writeReviewStartBtn"><i class="fas fa-star"></i> Start Write Review</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- GMB → Review URL Modal -->
+    <div id="gmbToReviewModalOverlay" class="profile-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="width:520px;">
+            <div class="pm-modal-header">
+                <h3><i class="fas fa-link" style="color:#6366f1;"></i> GMB URL → Review URL</h3>
+                <button class="pm-modal-close" id="gmbToReviewCloseBtn">&times;</button>
+            </div>
+            <div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px;">
+                <div>
+                    <label style="font-size:12px;color:#94a3b8;display:block;margin-bottom:6px;">
+                        Excel File <span style="color:#64748b;">(must have a "GMB URL" column)</span>
+                    </label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="text" id="gmbToReviewFilePath" placeholder="gmb_urls.xlsx"
+                            style="flex:1;background:#111;border:1px solid #3b4fd8;border-radius:6px;padding:7px 12px;color:#e2e8f0;font-size:13px;">
+                        <button class="btn btn-secondary btn-sm" id="gmbToReviewBrowseBtn">
+                            <i class="fas fa-folder-open"></i>
+                        </button>
+                    </div>
+                    <div id="gmbToReviewPreview"
+                        style="display:none;margin-top:8px;padding:8px 12px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:6px;font-size:12px;gap:10px;flex-wrap:wrap;align-items:center;">
+                    </div>
+                </div>
+                <!-- Progress shown in global opProgressPanel after start -->
+            </div>
+            <div class="pm-modal-footer">
+                <div style="display:flex;gap:8px;margin-left:auto;">
+                    <button class="btn btn-secondary" id="gmbToReviewCancelBtn">Cancel</button>
+                    <button class="btn btn-primary" id="gmbToReviewStartBtn">
+                        <i class="fas fa-play"></i> Generate Review URLs
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group Manager Modal -->
+    <div id="groupManagerOverlay" class="profile-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="width:520px;max-height:80vh;display:flex;flex-direction:column;">
+            <div class="pm-modal-header"><h3><i class="fas fa-layer-group"></i> Manage Groups</h3><button class="pm-modal-close" id="groupManagerCloseBtn">×</button></div>
+            <div style="padding:16px;flex:1;overflow-y:auto;">
+                <!-- Create new group -->
+                <div style="display:flex;gap:8px;margin-bottom:16px;">
+                    <input type="text" id="newGroupNameInput" placeholder="New group name..." style="flex:1;background:#0f1629;border:1px solid #3b4fd8;border-radius:6px;padding:7px 12px;color:#e2e8f0;font-size:13px;">
+                    <button class="btn btn-primary btn-sm" id="createGroupBtn"><i class="fas fa-plus"></i> Create</button>
+                </div>
+                <!-- Group list -->
+                <div id="groupManagerList" style="display:flex;flex-direction:column;gap:6px;">
+                    <div style="color:#64748b;text-align:center;padding:20px;">Loading...</div>
+                </div>
+            </div>
+            <div class="pm-modal-footer" style="justify-content:flex-end;">
+                <button class="btn btn-secondary" id="groupManagerDoneBtn">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Group Modal -->
+    <div id="renameGroupOverlay" class="profile-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="width:380px;">
+            <div class="pm-modal-header"><h3><i class="fas fa-edit"></i> Rename Group</h3><button class="pm-modal-close" id="renameGroupCloseBtn">×</button></div>
+            <div style="padding:20px;display:flex;flex-direction:column;gap:12px;">
+                <div style="color:#94a3b8;font-size:13px;">Renaming: <strong id="renameGroupOldName" style="color:#a5b4fc;"></strong></div>
+                <input type="text" id="renameGroupNewInput" placeholder="New name..." style="background:#0f1629;border:1px solid #3b4fd8;border-radius:6px;padding:8px 12px;color:#e2e8f0;font-size:13px;">
+            </div>
+            <div class="pm-modal-footer">
+                <button class="btn btn-secondary" id="renameGroupCancelBtn">Cancel</button>
+                <button class="btn btn-primary" id="renameGroupConfirmBtn"><i class="fas fa-check"></i> Rename</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Group Modal -->
+    <div id="deleteGroupOverlay" class="profile-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="width:400px;">
+            <div class="pm-modal-header"><h3><i class="fas fa-trash"></i> Delete Group</h3><button class="pm-modal-close" id="deleteGroupCloseBtn">×</button></div>
+            <div style="padding:20px;display:flex;flex-direction:column;gap:12px;">
+                <div style="color:#94a3b8;font-size:13px;">Delete group: <strong id="deleteGroupName" style="color:#f87171;"></strong></div>
+                <div style="font-size:12px;color:#64748b;">Profiles in this group will be moved to:</div>
+                <input type="text" id="deleteGroupReassignInput" list="pmGroupList2" value="default" style="background:#0f1629;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#e2e8f0;font-size:13px;">
+                <datalist id="pmGroupList2"></datalist>
+                <div style="font-size:12px;color:#64748b;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:6px;padding:8px;">
+                    <i class="fas fa-info-circle" style="color:#f87171;"></i> Only removes this group from profiles — profiles with multiple groups keep their other groups.
+                </div>
+            </div>
+            <div class="pm-modal-footer">
+                <button class="btn btn-secondary" id="deleteGroupCancelBtn">Cancel</button>
+                <button class="btn btn-danger" id="deleteGroupConfirmBtn"><i class="fas fa-trash"></i> Delete Group</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="modules/debug.js"></script>
+    <script src="modules/totp.js"></script>
+    <script src="modules/tools.js"></script>
+    <script src="modules/profiles.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

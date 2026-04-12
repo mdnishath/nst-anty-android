@@ -1,0 +1,38 @@
+{
+  "latest_version": "3.1.0",
+  "download_url": "https://drive.google.com/file/d/1mFRLclLXKeVNex9AdzlKYAykwBtpjKIK/view?usp=sharing",
+  "release_date": "2026-03-10",
+  "changelog": [
+    {
+      "version": "3.1.0",
+      "date": "2026-03-10",
+      "type": "patch",
+      "changes": [
+        "Reort Enhance",
+        "Profile manger updated"
+      ],
+      "migration": ""
+    },
+    {
+      "version": "3.0.1",
+      "date": "2026-03-10",
+      "type": "patch",
+      "changes": [
+        "test"
+      ],
+      "migration": "test"
+    },
+    {
+      "version": "3.0.0",
+      "date": "2026-03-10",
+      "type": "major",
+      "changes": [
+        "Initial public release",
+        "License tier system (Basic / Pro)",
+        "Anti-detect browser profiles with unique fingerprints",
+        "Auto-update check system"
+      ],
+      "migration": ""
+    }
+  ]
+}

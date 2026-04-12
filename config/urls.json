@@ -1,0 +1,24 @@
+{
+  "comment": "Direct Google Account URLs - These bypass normal navigation",
+  "urls": {
+    "login": "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fmail.google.com%2Fmail%2F&dsh=S1897028005%3A1771961325624685&ifkv=ASfE1-qrxsWcdKB_zrZQPZGbCFaxkraBVmYW6rSL3RNHNKVjlS-3VxhJ_xAJNXLuC4rfL5t3-xJjqg&rip=1&sacu=1&service=mail&flowName=GlifWebSignIn&flowEntry=ServiceLogin&hl=en",
+    "password_change": "https://myaccount.google.com/signinoptions/password",
+    "recovery_phone": "https://myaccount.google.com/signinoptions/rescuephone",
+    "recovery_email": "https://myaccount.google.com/recovery/email",
+    "two_factor_settings": "https://myaccount.google.com/signinoptions/twosv",
+    "two_factor_phone": "https://myaccount.google.com/two-step-verification/phone-numbers",
+    "authenticator_app": "https://myaccount.google.com/two-step-verification/authenticator",
+    "backup_codes": "https://myaccount.google.com/two-step-verification/backup-codes",
+    "google_prompts": "https://myaccount.google.com/two-step-verification/prompt",
+    "devices": "https://myaccount.google.com/device-activity",
+    "phone_number": "https://myaccount.google.com/phone",
+    "language": "https://myaccount.google.com/language",
+    "name": "https://myaccount.google.com/profile/name/edit"
+  },
+  "delays": {
+    "page_load": 3,
+    "typing_delay": 100,
+    "action_delay": 1,
+    "between_accounts": 5
+  }
+}

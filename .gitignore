@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Logs & Debug
+debug.log
+logs/
+*.log
+
+# Runtime output folders
+output/
+success/
+failed/
+screenshots/
+
+# Browser profiles (Playwright/Chromium data)
+data/chrome_profiles/
+data/
+browser_profiles/
+
+# Input data (sensitive)
+input/
+
+# Excel data files (sensitive account data)
+*.xlsx
+*.xls
+.~lock.*
+
+# Node.js / Electron
+node_modules/
+electron-app/node_modules/
+electron-app/dist/
+electron-app/output/
+electron-app/backend/dist/
+electron-app/backend/build/
+
+# Electron builder artifacts
+*.blockmap
+
+# Environment & secrets
+.env
+.env.*
+config/settings.json
+config/auth.json
+config/license.json
+config/profiles_config.json
+tools/license_counter.txt
+tools/license_db.json
+tools/revoked_licenses.json
+tools/gist_config.json
+config/gdrive.json
+config/gdrive_service_account.json
+config/gdrive_credentials.json
+config/gdrive_token.json
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude
+.claude/
+
+# Misc
+nul
+# Database files
+*.db
+*.sqlite
+
+# NexusBrowser build artifacts (huge — don't commit)
+nexusbrowser/chromium/
+nexusbrowser/depot_tools/
+nexusbrowser/backups/
