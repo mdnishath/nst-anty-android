@@ -667,6 +667,8 @@
             _startPmTotp();
             _setVal('pmNotes', p.notes || '');
             _setVal('pmAddress', p.address || '');
+            _setVal('pmRecoveryEmail', p.recovery_email || '');
+            _setVal('pmRecoveryPhone', p.recovery_phone || '');
             const codes = p.backup_codes || [];
             for (let i = 1; i <= 10; i++) _setVal('pmBC' + i, codes[i - 1] || '');
 
@@ -691,6 +693,7 @@
         _setVal('pmProxyPaste', '');
         _toggleProxyFields();
         _setVal('pmEmail', ''); _setVal('pmPassword', ''); _setVal('pmTotp', ''); _setVal('pmNotes', ''); _setVal('pmAddress', '');
+        _setVal('pmRecoveryEmail', ''); _setVal('pmRecoveryPhone', '');
         _stopPmTotp();
         for (let i = 1; i <= 10; i++) _setVal('pmBC' + i, '');
         _setVal('pmBCParser', '');
@@ -835,6 +838,8 @@
             password: _val('pmPassword').trim(),
             totp_secret: _val('pmTotp').trim(),
             backup_codes,
+            recovery_email: _val('pmRecoveryEmail').trim(),
+            recovery_phone: _val('pmRecoveryPhone').trim(),
             fingerprint_prefs: { os_type: os },
             groups: _pmGroupsState.length ? _pmGroupsState : ['default'],
             group: _pmGroupsState[0] || 'default',
@@ -1073,6 +1078,17 @@
         // Reset ops checkboxes
         modal.querySelectorAll('.runops-op').forEach(cb => { cb.checked = false; });
         _updateRunOpsParams();
+        // Pre-fill Recovery Email/Phone from first selected profile (if any)
+        setTimeout(() => {
+            const firstId = [..._runOpsChecked][0];
+            const firstProfile = _runOpsProfiles.find(p => p.id === firstId);
+            if (firstProfile) {
+                const reEl = document.getElementById('runOpsRecoveryEmail');
+                const rpEl = document.getElementById('runOpsRecoveryPhone');
+                if (reEl && !reEl.value) reEl.value = firstProfile.recovery_email || '';
+                if (rpEl && !rpEl.value) rpEl.value = firstProfile.recovery_phone || '';
+            }
+        }, 250);
         modal.style.display = 'flex';
     }
 
@@ -2015,6 +2031,72 @@
         } catch (e) { App.toast('Cleanup error', 'error'); }
     }
 
+    async function restoreFromNst() {
+        // Step 1: dry-run to see what's missing
+        App.toast('Scanning NST for missing profiles…', 'info');
+        let preview;
+        try {
+            preview = await _api('/api/profiles/restore-from-nst', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dry_run: true })
+            });
+        } catch (e) { App.toast('Restore scan failed: ' + e.message, 'error'); return; }
+
+        if (!preview.success) { App.toast(preview.error || 'NST scan failed', 'error'); return; }
+
+        const groupsList = Object.entries(preview.groups || {})
+            .sort((a, b) => b[1] - a[1])
+            .map(([g, c]) => `  • ${g}: ${c}`).join('\n');
+
+        if (preview.missing === 0) {
+            App.toast(`All ${preview.total_in_nst} NST profiles already present locally — nothing to restore.`, 'success');
+            return;
+        }
+
+        const groupNames = Object.keys(preview.groups || {});
+        const groupChoice = prompt(
+            `NST has ${preview.total_in_nst} total profiles.\n` +
+            `${preview.already_present} already in local registry.\n` +
+            `${preview.missing} MISSING — can be restored.\n\n` +
+            `Groups available in NST:\n${groupsList}\n\n` +
+            `Type a group name to restore ONLY that group,\n` +
+            `or leave EMPTY and click OK to restore ALL ${preview.missing} missing.\n` +
+            `(Cancel to abort.)`,
+            ''
+        );
+        if (groupChoice === null) return;
+
+        const body = { dry_run: false };
+        if (groupChoice.trim()) {
+            if (!groupNames.includes(groupChoice.trim())) {
+                App.toast(`Group "${groupChoice}" not found in NST`, 'error');
+                return;
+            }
+            body.group = groupChoice.trim();
+        }
+
+        if (!confirm(`Restore profiles to local registry now?\n\n` +
+                     (body.group ? `Group filter: ${body.group}\n` : `All groups\n`) +
+                     `\nA backup of profiles.json will be made automatically.`)) return;
+
+        App.toast('Restoring… please wait.', 'info');
+        try {
+            const result = await _api('/api/profiles/restore-from-nst', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (result.success) {
+                App.toast(`✓ Restored ${result.restored} profile(s). Reloading…`, 'success');
+                if (typeof loadProfiles === 'function') await loadProfiles();
+                else location.reload();
+            } else {
+                App.toast(result.error || 'Restore failed', 'error');
+            }
+        } catch (e) { App.toast('Restore error: ' + e.message, 'error'); }
+    }
+
     async function checkProxy() {
         const host = _val('pmProxyHost').trim();
         const port = _val('pmProxyPort').trim();
@@ -2612,6 +2694,7 @@
         // Action buttons
         _btn('profileCloseAllBtn', closeAllProfiles);
         _btn('profileCleanupBtn', cleanupOrphans);
+        _btn('profileRestoreNstBtn', restoreFromNst);
         _btn('profileBatchLoginBtn', openBatchLoginModal);
         _btn('profileRunOpsBtn', openRunOpsModal);
         _setupRunOpsModal();

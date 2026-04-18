@@ -563,6 +563,7 @@
 
                 <!-- Management group -->
                 <div class="pm-action-group-btns" style="gap:6px;">
+                    <button class="btn btn-secondary btn-sm" id="profileRestoreNstBtn" title="Recover profiles missing from local registry by pulling them from NST Browser"><i class="fas fa-cloud-download-alt"></i> Restore from NST</button>
                     <button class="btn btn-secondary btn-sm" id="profileCloseAllBtn"><i class="fas fa-stop-circle"></i> Close All</button>
                     <button class="btn btn-secondary btn-sm" id="profileCleanupBtn"><i class="fas fa-broom"></i> Cleanup</button>
                 </div>
@@ -714,6 +715,10 @@
                                 </div>
                             </div>
                             <div class="form-group"><label>Business Address</label><input type="text" id="pmAddress" placeholder="e.g. 123 Main St, Paris, France — GMB area for this profile"></div>
+                            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                                <div class="form-group"><label>Recovery Email</label><input type="text" id="pmRecoveryEmail" placeholder="recovery@example.com"></div>
+                                <div class="form-group"><label>Recovery Phone</label><input type="text" id="pmRecoveryPhone" placeholder="+1234567890"></div>
+                            </div>
                             <div class="form-group"><label>Notes</label><textarea id="pmNotes" rows="2" placeholder="Any notes..."></textarea></div>
                             <div style="font-size:12px;font-weight:600;color:#94a3b8;margin:12px 0 6px;">Backup Codes</div>
                             <div style="display:flex;gap:6px;margin-bottom:8px;">
@@ -1635,130 +1640,79 @@
 
                 <!-- RIGHT: Operations + Parameters -->
                 <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
-                    <!-- Step tabs -->
-                    <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;flex-wrap:wrap;">
-                        <button class="btn btn-sm runops-step-tab active" data-step="2" style="font-size:11px;">
-                            <i class="fas fa-shield-alt"></i> Step 2 — Security
-                        </button>
-                        <button class="btn btn-sm runops-step-tab" data-step="1" style="font-size:11px;">
-                            <i class="fas fa-globe"></i> Step 1 — Language
-                        </button>
-                        <button class="btn btn-sm runops-step-tab" data-step="3" style="font-size:11px;">
-                            <i class="fas fa-map-marker-alt"></i> Step 3 — Reviews
-                        </button>
-                        <button class="btn btn-sm runops-step-tab" data-step="4" style="font-size:11px;">
-                            <i class="fas fa-gavel"></i> Step 4 — Appeals
-                        </button>
-                    </div>
-
                     <!-- Operations list (scrollable) -->
                     <div style="flex:1;overflow-y:auto;padding:10px 14px;">
-                        <!-- STEP 2 ops -->
-                        <div id="runOpsStep2" class="runops-step-panel">
-                            <div class="runops-cat">Password & Recovery</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="1"> Change Password</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="2a"> Add Recovery Phone</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="2b"> Remove Recovery Phone</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="3a"> Add Recovery Email</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="3b"> Remove Recovery Email</label>
-                            </div>
-                            <div class="runops-cat">2FA & Authenticator</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="10a"> Enable 2FA</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="10b"> Disable 2FA</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="6a"> Add 2FA Phone</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="6b"> Remove 2FA Phone</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="4a"> Change Authenticator (TOTP)</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="4b"> Remove Authenticator</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="5a"> Generate Backup Codes</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="5b"> Remove Backup Codes</label>
-                            </div>
-                            <div class="runops-cat">Account</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="8"> Change Name</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="7"> Remove All Devices</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="9"> Security Checkup</label>
-                            </div>
-                        </div>
-
-                        <!-- STEP 1 ops -->
-                        <div id="runOpsStep1" class="runops-step-panel" style="display:none;">
-                            <div class="runops-cat">Language & Activity</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L1"> Change Language to English</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L2"> Fix Activity</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L4"> Enable Safe Browsing</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L5"> Disable Safe Browsing</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L6"> Check Maps Usage</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="L7"> Get Gmail Creation Year</label>
-                            </div>
-                        </div>
-
-                        <!-- STEP 3 ops -->
-                        <div id="runOpsStep3" class="runops-step-panel" style="display:none;">
-                            <div class="runops-cat">Maps Reviews</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R1"> Delete All Reviews</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R2"> Delete Non-Posted Reviews</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R4"> Lock Profile</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R5"> Unlock Profile</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="R6"> Get Review Link</label>
-                            </div>
-                        </div>
-
-                        <!-- STEP 4 ops -->
-                        <div id="runOpsStep4" class="runops-step-panel" style="display:none;">
-                            <div class="runops-cat">Appeals</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="A1"> Do All Appeals</label>
-                                <label class="health-act-item"><input type="checkbox" class="runops-op" value="A2"> Delete Refused Appeals</label>
-                            </div>
-                        </div>
-
-                        <!-- PARAMETERS (dynamic — shown based on selected ops) -->
-                        <div id="runOpsParams" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
-                            <div class="runops-cat">Parameters</div>
-                            <div id="runOpsParamPassword" style="display:none;margin-bottom:8px;">
-                                <label style="font-size:11px;color:#94a3b8;">New Password:</label>
-                                <input type="text" id="runOpsNewPassword" placeholder="New password for all selected profiles"
-                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
-                            </div>
-                            <div id="runOpsParamRecoveryPhone" style="display:none;margin-bottom:8px;">
-                                <label style="font-size:11px;color:#94a3b8;">Recovery Phone (comma-separated for round-robin):</label>
-                                <input type="text" id="runOpsRecoveryPhone" placeholder="+1234567890, +0987654321"
-                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
-                            </div>
-                            <div id="runOpsParamRecoveryEmail" style="display:none;margin-bottom:8px;">
-                                <label style="font-size:11px;color:#94a3b8;">Recovery Email (comma-separated for round-robin, max 10 per email):</label>
-                                <input type="text" id="runOpsRecoveryEmail" placeholder="recovery1@gmail.com, recovery2@gmail.com"
-                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
-                            </div>
-                            <div id="runOpsParam2FAPhone" style="display:none;margin-bottom:8px;">
-                                <label style="font-size:11px;color:#94a3b8;">2FA Phone (comma-separated for round-robin):</label>
-                                <input type="text" id="runOps2FAPhone" placeholder="+1234567890"
-                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;margin-top:3px;">
-                            </div>
-                            <div id="runOpsParamNames" style="display:none;margin-bottom:8px;">
-                                <label style="font-size:11px;color:#94a3b8;">Name List (one per line: FirstName LastName):</label>
-                                <div style="display:flex;gap:6px;margin-top:3px;margin-bottom:4px;">
-                                    <select id="runOpsNameCountry" style="background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:4px 8px;color:#e2e8f0;font-size:11px;">
-                                        <option value="US">US</option><option value="UK">UK</option><option value="FR">FR</option>
-                                        <option value="DE">DE</option><option value="BD">BD</option><option value="IN">IN</option>
-                                        <option value="BR">BR</option><option value="TR">TR</option><option value="PK">PK</option>
-                                        <option value="ID">ID</option><option value="PH">PH</option>
-                                    </select>
-                                    <button class="btn btn-sm" id="runOpsLoadNamesBtn" style="font-size:10px;">
-                                        <i class="fas fa-file-upload"></i> Load from File
-                                    </button>
-                                    <input type="file" id="runOpsNameFileInput" accept=".txt,.csv,.xlsx" style="display:none;">
-                                    <span style="font-size:10px;color:#64748b;align-self:center;">Leave empty for random names by country</span>
+                        <!-- Operations will be added here one by one -->
+                        <div id="runOpsStep1" class="runops-step-panel">
+                            <!-- Step 1: Language & Activity -->
+                            <div style="margin-bottom:10px;">
+                                <div style="font-size:12px;font-weight:600;color:#a5b4fc;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">
+                                    <i class="fas fa-language" style="margin-right:4px;"></i> Step 1 — Language & Activity
                                 </div>
-                                <textarea id="runOpsNameList" rows="4" placeholder="John Smith&#10;Jane Doe&#10;Ali Ahmed"
-                                    style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:6px 10px;color:#e2e8f0;font-size:12px;resize:vertical;"></textarea>
+                                <div style="display:flex;flex-direction:column;gap:4px;">
+                                    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#e2e8f0;transition:background .15s;" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                                        <input type="checkbox" value="L1" class="runops-op">
+                                        <span>Op L1 — Change Language to English (US)</span>
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#e2e8f0;transition:background .15s;" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                                        <input type="checkbox" value="L3" class="runops-op">
+                                        <span>Op L3 — Change Language to Français (France)</span>
+                                    </label>
+                                </div>
                             </div>
-                            <div id="runOpsNoParams" style="color:#64748b;font-size:12px;font-style:italic;">
-                                Select operations above to see parameter inputs.
+
+                            <!-- Step 2: Account Security -->
+                            <div style="margin-bottom:10px;">
+                                <div style="font-size:12px;font-weight:600;color:#a5b4fc;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">
+                                    <i class="fas fa-shield-alt" style="margin-right:4px;"></i> Step 2 — Account Security
+                                </div>
+                                <div style="display:flex;flex-direction:column;gap:4px;">
+                                    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#e2e8f0;transition:background .15s;" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                                        <input type="checkbox" value="2a" class="runops-op">
+                                        <span>Op 2a — Add Recovery Phone</span>
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#e2e8f0;transition:background .15s;" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                                        <input type="checkbox" value="2b" class="runops-op">
+                                        <span>Op 2b — Remove Recovery Phone</span>
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#e2e8f0;transition:background .15s;" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                                        <input type="checkbox" value="3a" class="runops-op">
+                                        <span>Op 3a — Add Recovery Email</span>
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#e2e8f0;transition:background .15s;" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                                        <input type="checkbox" value="3b" class="runops-op">
+                                        <span>Op 3b — Remove Recovery Email</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- Step 3: Maps Reviews -->
+                            <div style="margin-bottom:10px;">
+                                <div style="font-size:12px;font-weight:600;color:#a5b4fc;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">
+                                    <i class="fas fa-star" style="margin-right:4px;"></i> Step 3 — Maps Reviews
+                                </div>
+                                <div style="display:flex;flex-direction:column;gap:4px;">
+                                    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;color:#e2e8f0;transition:background .15s;" onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                                        <input type="checkbox" value="R2" class="runops-op">
+                                        <span>Op R2 — Delete Draft Reviews (not-posted)</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- PARAMETERS (visibility toggled by profiles.js _updateRunOpsParams) -->
+                        <div id="runOpsParams" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+                            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                                <div id="runOpsParamRecoveryPhone" style="flex:1;min-width:200px;display:none;">
+                                    <label style="font-size:11px;color:#64748b;display:block;margin-bottom:3px;">Recovery Phone</label>
+                                    <input type="text" id="runOpsRecoveryPhone" placeholder="+1234567890"
+                                           style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:6px 8px;color:#e2e8f0;font-size:12px;">
+                                </div>
+                                <div id="runOpsParamRecoveryEmail" style="flex:1;min-width:200px;display:none;">
+                                    <label style="font-size:11px;color:#64748b;display:block;margin-bottom:3px;">Recovery Email</label>
+                                    <input type="text" id="runOpsRecoveryEmail" placeholder="recovery@example.com"
+                                           style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:6px 8px;color:#e2e8f0;font-size:12px;">
+                                </div>
                             </div>
                         </div>
                     </div>

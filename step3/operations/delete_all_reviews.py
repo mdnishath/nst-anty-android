@@ -52,6 +52,13 @@ async def delete_all_reviews(page, worker_id) -> bool:
 
             # Click Delete in the menu (with retry)
             if not await find_and_click(page, [
+                # Actual Maps DOM (2026): role=menuitemradio with .mLuXec text label
+                'div[role="menuitemradio"]:has(.mLuXec:text-is("Delete review"))',
+                'div[role="menuitemradio"] .mLuXec:text-is("Delete review")',
+                '.fxNQSd[role="menuitemradio"]:has-text("Delete review")',
+                '.mLuXec:has-text("Delete review")',
+                # French + legacy fallbacks
+                'div[role="menuitemradio"]:has-text("Supprimer")',
                 'li[aria-label="Delete review"]',
                 '[data-value="Delete review"]',
                 'button:has-text("Delete review")',

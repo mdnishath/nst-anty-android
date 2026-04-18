@@ -653,7 +653,8 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
                    password: str = '', totp_secret: str = '',
                    backup_codes: list | None = None,
                    frontend_sections: dict | None = None,
-                   engine: str = 'nexus', address: str = '') -> dict:
+                   engine: str = 'nexus', address: str = '',
+                   recovery_email: str = '', recovery_phone: str = '') -> dict:
     """Create a local profile launched with NST's nstchrome binary.
 
     Args:
@@ -987,6 +988,8 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
             'password': password or '',
             'totp_secret': totp_secret or '',
             'backup_codes': backup_codes or [],
+            'recovery_email': recovery_email or '',
+            'recovery_phone': recovery_phone or '',
             'address': address or '',
         }
         profiles.append(profile)
@@ -1010,6 +1013,7 @@ def update_profile(profile_id: str, **fields) -> dict | None:
                     'overview', 'hardware', 'advanced', 'fingerprint',
                     'password', 'totp_secret', 'backup_codes', 'address',
                     'fingerprint_prefs', 'engine', 'startup_urls',
+                    'recovery_email', 'recovery_phone',
                 }
 
                 # Normalize proxy FIRST before storing
@@ -1202,6 +1206,168 @@ def cleanup_orphans() -> dict:
     if removed:
         _log(f"Cleanup: {len(removed)} orphan folder(s) removed", 'success')
     return {'removed': len(removed), 'folders': removed}
+
+
+def _fetch_all_nst_profiles() -> list[dict]:
+    """Paginate NST API and return every profile doc the API key can see."""
+    page = 1
+    page_size = 100   # NST caps at 100
+    all_docs = []
+    while True:
+        data = _nst_get('/profiles/', params={'page': page, 'pageSize': page_size}, timeout=30)
+        if not data:
+            break
+        d = data.get('data') or {}
+        docs = d.get('docs') or []
+        if not docs:
+            break
+        all_docs.extend(docs)
+        total = d.get('totalDocs') or d.get('total') or len(all_docs)
+        if len(all_docs) >= total or len(docs) < page_size:
+            break
+        page += 1
+    return all_docs
+
+
+def _nst_doc_to_local_profile(nst: dict) -> dict:
+    """Map an NST profile API doc → the dict shape stored in profiles.json."""
+    pid = nst.get('profileId') or nst['_id']
+    name = nst.get('name', '') or pid[:8]
+    note = nst.get('note', '') or ''
+    email = note if '@' in note else ''
+    group = (nst.get('group') or {}).get('name') or 'default'
+
+    proxy_cfg = nst.get('proxyConfig') or {}
+    proxy = None
+    if proxy_cfg.get('host'):
+        proxy = {
+            'protocol': proxy_cfg.get('protocol', 'http'),
+            'host': proxy_cfg.get('host', ''),
+            'port': proxy_cfg.get('port', ''),
+            'username': proxy_cfg.get('username', ''),
+            'password': proxy_cfg.get('password', ''),
+        }
+    proxy_tz = ((nst.get('proxyResult') or {}).get('timezone')) or ''
+    fp_id = nst.get('fingerprintId', '')
+    created = nst.get('createdAt') or datetime.now().isoformat(timespec='seconds')
+
+    return {
+        'id': pid,
+        'nst_profile_id': pid,
+        'engine': 'nst',
+        'name': name,
+        'email': email,
+        'group': group,
+        'status': 'not_logged_in',
+        'created_at': created,
+        'last_used': nst.get('lastLaunchedAt'),
+        'tags': nst.get('tags') or [],
+        'notes': note if not email else '',
+        'profile_dir': str(_profiles_dir() / pid),
+        'proxy': proxy,
+        'overview': {
+            'name': name, 'group': group,
+            'startup_urls': nst.get('startupUrls') or [],
+        },
+        'fingerprint': {'id': fp_id} if fp_id else {},
+        'advanced': {'save_tabs': True},
+        'proxy_timezone': proxy_tz,
+        'password': '', 'totp_secret': '', 'backup_codes': [],
+        'recovery_email': '', 'recovery_phone': '', 'address': '',
+    }
+
+
+def restore_missing_from_nst(group: str | None = None, dry_run: bool = False) -> dict:
+    """Recover profiles that exist in NST Browser but are missing from local profiles.json.
+
+    Use case: profiles.json got wiped/corrupted but profiles still live in NST.
+    Pulls the full NST profile list and appends any not already present locally.
+
+    Args:
+        group: If set, only restore profiles whose NST group name matches this.
+        dry_run: If True, return what WOULD be restored without writing.
+
+    Returns: {success, total_in_nst, already_present, missing, restored, groups, sample}
+    """
+    if not _nst_api_key:
+        return {'success': False, 'error': 'NST API key not configured'}
+
+    _log(f"Restore-from-NST: fetching all profiles (group filter={group!r}, dry_run={dry_run})")
+
+    nst_docs = _fetch_all_nst_profiles()
+    if not nst_docs:
+        return {'success': False, 'error': 'No profiles returned from NST (is NST Browser running?)'}
+
+    # Group breakdown for the response
+    groups_count = {}
+    for d in nst_docs:
+        g = (d.get('group') or {}).get('name') or 'default'
+        groups_count[g] = groups_count.get(g, 0) + 1
+
+    if group:
+        nst_docs = [d for d in nst_docs
+                    if ((d.get('group') or {}).get('name') or 'default') == group]
+
+    # Existing local profiles — set of nst_profile_ids
+    with _file_lock if False else _dummy_lock():
+        existing = _read_profiles()
+    existing_ids = {p.get('nst_profile_id') or p.get('id') for p in existing}
+
+    # Filter NST docs not yet local
+    missing = []
+    for d in nst_docs:
+        pid = d.get('profileId') or d.get('_id')
+        if pid and pid not in existing_ids:
+            missing.append(d)
+
+    sample = []
+    new_profiles = []
+    for d in missing:
+        mapped = _nst_doc_to_local_profile(d)
+        new_profiles.append(mapped)
+        if len(sample) < 5:
+            sample.append({
+                'id': mapped['id'][:8],
+                'name': mapped['name'],
+                'email': mapped['email'],
+                'group': mapped['group'],
+            })
+
+    result = {
+        'success': True,
+        'total_in_nst': len(nst_docs),
+        'already_present': len(nst_docs) - len(missing),
+        'missing': len(missing),
+        'restored': 0,
+        'groups': groups_count,
+        'sample': sample,
+        'dry_run': dry_run,
+    }
+
+    if dry_run or not new_profiles:
+        return result
+
+    # Backup current profiles.json before writing
+    pf = _profiles_file()
+    if pf.exists() and pf.stat().st_size > 2:
+        try:
+            backup = pf.with_suffix(f'.json.bak.{int(datetime.now().timestamp())}')
+            shutil.copy2(pf, backup)
+            _log(f"Backed up profiles.json -> {backup.name}")
+        except Exception as e:
+            _log(f"Backup failed (continuing anyway): {e}", 'warning')
+
+    merged = existing + new_profiles
+    _write_profiles(merged)
+    result['restored'] = len(new_profiles)
+    _log(f"Restore-from-NST: restored {len(new_profiles)} profile(s)", 'success')
+    return result
+
+
+def _dummy_lock():
+    """No-op context manager (file lock placeholder for restore op)."""
+    import contextlib
+    return contextlib.nullcontext()
 
 
 def batch_create(count: int, blueprint: dict | None = None) -> list[dict]:

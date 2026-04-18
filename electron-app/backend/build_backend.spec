@@ -83,6 +83,8 @@ a = Analysis(
         'gmail_bot_step1', 'gmail_bot_step2', 'gmail_bot_step3', 'gmail_bot_step4',
         'gmail_bot_linked',
         'prepare_excel_with_common_settings',
+        # ── Step 2 operation implementations (used by step2/operations/*.py) ──
+        'test_operations',
 
         # ── src/ modules ─────────────────────────────────────────────────────
         'src', 'src.screen_detector', 'src.gmail_authenticator',
@@ -104,6 +106,9 @@ a = Analysis(
         'step1.operations.gmail_health',
         'step1.operations.safe_browsing',
         'step1.operations.gmail_year', 'step1.operations.map_used',
+        'step1.operations.web_app_activity',
+        'step1.operations.youtube_activity',
+        'step1.operations.map_timeline',
 
         # ── step2/ modules ───────────────────────────────────────────────────
         'step2', 'step2.runner', 'step2.operations',

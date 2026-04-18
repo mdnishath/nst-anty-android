@@ -183,12 +183,18 @@ async def _delete_at(page, worker_id, target_idx: int) -> bool:
     # ── Click "Delete review" ─────────────────────────────────────────────
     delete_clicked = False
     for sel in [
+        # Actual Maps DOM (2026): role=menuitemradio with .mLuXec text label
+        'div[role="menuitemradio"]:has(.mLuXec:text-is("Delete review"))',
+        'div[role="menuitemradio"] .mLuXec:text-is("Delete review")',
+        '.fxNQSd[role="menuitemradio"]:has-text("Delete review")',
+        '.mLuXec:has-text("Delete review")',
+        # French + fallbacks
+        'div[role="menuitemradio"]:has-text("Supprimer")',
+        'div[role="menuitem"]:has-text("Delete review")',
         'li[data-action-type*="delete"]',
         'li:has-text("Delete review")',
         'button:has-text("Delete review")',
-        'div[role="menuitem"]:has-text("Delete")',
         '[aria-label*="Delete review"]',
-        'li:has-text("Delete")',
     ]:
         try:
             el = page.locator(sel).first

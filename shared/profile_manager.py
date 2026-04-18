@@ -659,7 +659,8 @@ def get_profile(profile_id: str) -> dict | None:
 def create_profile(name: str, email: str = '', proxy: dict | None = None,
                    notes: str = '', fingerprint_prefs: dict | None = None,
                    password: str = '', totp_secret: str = '',
-                   backup_codes: list | None = None) -> dict:
+                   backup_codes: list | None = None,
+                   recovery_email: str = '', recovery_phone: str = '') -> dict:
     """Create a new browser profile with unique fingerprint.
 
     Args:
@@ -674,6 +675,8 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
         password: Gmail password
         totp_secret: TOTP 2FA secret
         backup_codes: List of backup code strings
+        recovery_email: Saved recovery email (used by Run Ops as default)
+        recovery_phone: Saved recovery phone (used by Run Ops as default)
     """
     _ensure_dirs()
     profile_id = secrets.token_hex(4)
@@ -732,6 +735,8 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
             'password': password or '',
             'totp_secret': totp_secret or '',
             'backup_codes': backup_codes or [],
+            'recovery_email': recovery_email or '',
+            'recovery_phone': recovery_phone or '',
         }
 
         profiles.append(profile)
@@ -750,7 +755,8 @@ def update_profile(profile_id: str, **fields) -> dict | None:
             if p['id'] == profile_id:
                 allowed = {'name', 'email', 'proxy', 'notes', 'status', 'fingerprint',
                            'password', 'totp_secret', 'backup_codes', 'group', 'groups',
-                           'startup_urls', 'os_type'}
+                           'startup_urls', 'os_type',
+                           'recovery_email', 'recovery_phone'}
                 for k, v in fields.items():
                     if k in allowed:
                         p[k] = v
@@ -2147,22 +2153,32 @@ def _run_all_ops_worker(profiles: list, operations: str, params: dict, num_worke
 async def _run_operations_for_profile(profile: dict, operations: str,
                                        params: dict, worker_id: int) -> dict:
     """Launch persistent browser, run Step 1/2/3/4 ops, close (NO signout).
-    Auto-saves credentials to profile after ops."""
+    Auto-saves credentials to profile after ops.
+
+    For NST engine profiles: uses NST API to preserve the existing login
+    session (cookies/localStorage). Local launch path is only used for
+    NexusBrowser engine profiles."""
     from playwright.async_api import async_playwright
 
     email = profile.get('email', '')
     password = profile.get('password', '')
+    engine = profile.get('engine', 'nexus')
     bridge = None
+    stealth = None
+    nst_profile_id = None
+    browser_obj = None
     op_list = [op.strip() for op in operations.split(',') if op.strip()]
 
     # Build pseudo-account dict (like Excel row) for step2 operations
+    # Pre-fill recovery info from profile if not provided in params (so
+    # subsequent runs reuse stored values without re-typing).
     account = {
         'Email': email,
         'Password': password,
         'New Password': params.get('new_password', ''),
-        'New Recovery Email': params.get('recovery_email', ''),
-        'New Recovery Phone': params.get('recovery_phone', ''),
-        'New 2FA Phone': params.get('recovery_phone', ''),
+        'New Recovery Email': params.get('recovery_email') or profile.get('recovery_email', ''),
+        'New Recovery Phone': params.get('recovery_phone') or profile.get('recovery_phone', ''),
+        'New 2FA Phone': params.get('twofa_phone') or params.get('recovery_phone') or profile.get('recovery_phone', ''),
         'TOTP Secret': profile.get('totp_secret', ''),
         'Name Country': params.get('name_country', 'US'),
         'First Name': profile.get('_op_first_name', params.get('first_name', '')),
@@ -2174,8 +2190,29 @@ async def _run_operations_for_profile(profile: dict, operations: str,
 
     try:
         async with async_playwright() as p:
-            context, bridge, stealth = await _launch_profile_context(p, profile)
-            page = await context.new_page()
+            # ── Launch browser via NST API (preserves session) ─────────
+            if engine == 'nst':
+                from shared.nexus_profile_manager import launch_and_connect, stop_nst_browser
+                nst_profile_id = profile.get('nst_profile_id') or profile.get('id')
+                _log(f"[OPS][W{worker_id}] {email}: launching via NST API (id={nst_profile_id})...")
+                ws_endpoint = await asyncio.to_thread(launch_and_connect, nst_profile_id)
+                browser_obj = await p.chromium.connect_over_cdp(ws_endpoint)
+                if not browser_obj.contexts:
+                    raise RuntimeError("NST browser has no contexts")
+                context = browser_obj.contexts[0]
+                # Reuse existing tab to keep session warm
+                page = context.pages[0] if context.pages else await context.new_page()
+                # Close other restored tabs except blank ones
+                for _extra in list(context.pages)[1:]:
+                    try:
+                        if _extra.url in ('about:blank', 'chrome://newtab/',
+                                          'chrome://new-tab-page/', ''):
+                            await _extra.close()
+                    except Exception:
+                        pass
+            else:
+                context, bridge, stealth = await _launch_profile_context(p, profile)
+                page = await context.new_page()
 
             # Close restored pages
             for old_page in list(context.pages):
@@ -2214,25 +2251,64 @@ async def _run_operations_for_profile(profile: dict, operations: str,
                                 op, page, account, password_url, worker_id
                             )
 
-                    op_results[op] = str(result_str) if result_str else 'OK'
+                    if result_str is True:
+                        op_results[op] = 'OK'
+                    elif result_str is False:
+                        op_results[op] = 'FAILED'
+                        fail_count += 1
+                    elif result_str is None:
+                        op_results[op] = 'FAILED'
+                        fail_count += 1
+                    else:
+                        op_results[op] = str(result_str)
 
-                    # Check for credential changes
+                    # Check for credential changes — auto-save updated info
                     if op == '1' and result_str is True:
                         new_pwd = account.get('New Password', '')
                         if new_pwd:
                             credentials_changed['password'] = new_pwd
                             account['Password'] = new_pwd  # for subsequent ops
+                    elif op == '2a' and result_str is True:
+                        # Recovery phone added/updated
+                        new_phone = account.get('New Recovery Phone', '')
+                        if new_phone:
+                            credentials_changed['recovery_phone'] = new_phone
+                    elif op == '2b' and result_str is True:
+                        # Recovery phone removed
+                        credentials_changed['recovery_phone'] = ''
+                    elif op == '3a' and result_str is True:
+                        # Recovery email added/updated
+                        new_email = account.get('New Recovery Email', '')
+                        if new_email:
+                            credentials_changed['recovery_email'] = new_email
+                    elif op == '3b' and result_str is True:
+                        # Recovery email removed
+                        credentials_changed['recovery_email'] = ''
                     elif op == '4a' and isinstance(result_str, tuple):
                         ok, key = result_str
                         if ok and key:
                             credentials_changed['totp_secret'] = key
                             op_results[op] = f'OK (key saved)'
+                    elif op == '4b' and result_str is True:
+                        # Authenticator removed
+                        credentials_changed['totp_secret'] = ''
                     elif op == '5a' and isinstance(result_str, list):
                         credentials_changed['backup_codes'] = result_str
                         op_results[op] = f'OK ({len(result_str)} codes)'
+                    elif op == '5b' and result_str is True:
+                        # Backup codes removed
+                        credentials_changed['backup_codes'] = []
+                    elif op == '6a' and result_str is True:
+                        # 2FA phone added (also recovery phone-like)
+                        new_phone = account.get('New 2FA Phone', '')
+                        if new_phone and not credentials_changed.get('recovery_phone'):
+                            credentials_changed['recovery_phone'] = new_phone
 
-                    if str(result_str).startswith('SKIP'):
-                        _log(f"[OPS][W{worker_id}] {email}: op {op} → {result_str}")
+                    result_label = op_results.get(op, '')
+                    if result_label.startswith('SKIP'):
+                        _log(f"[OPS][W{worker_id}] {email}: op {op} → {result_label}")
+                    elif result_label == 'FAILED' or result_str is False or result_str is None:
+                        _log(f"[OPS][W{worker_id}] {email}: op {op} → FAILED")
                     else:
                         success_count += 1
 
@@ -2241,17 +2317,26 @@ async def _run_operations_for_profile(profile: dict, operations: str,
                     op_results[op] = f'FAILED: {str(e)[:80]}'
                     _log(f"[OPS][W{worker_id}] {email}: op {op} FAILED: {e}", 'error')
 
-            # Close browser (NO signout)
-            try:
-                await context.close()
-            except Exception:
-                pass
+            # Close browser/context (NO signout — keep session alive)
+            # For NST: just disconnect Playwright. Browser keeps running.
+            # For local: close context normally.
+            if engine == 'nst':
+                try:
+                    if browser_obj:
+                        await browser_obj.close()
+                except Exception:
+                    pass
+            else:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
 
-            # Auto-save credentials to profile
+            # Auto-save credentials to profile (latest info)
             if credentials_changed:
                 try:
                     update_profile(profile['id'], **credentials_changed)
-                    _log(f"[OPS][W{worker_id}] {email}: credentials saved ({', '.join(credentials_changed.keys())})")
+                    _log(f"[OPS][W{worker_id}] {email}: profile updated ({', '.join(credentials_changed.keys())})")
                 except Exception as e:
                     _log(f"[OPS][W{worker_id}] {email}: failed to save credentials: {e}", 'error')
 
@@ -2266,6 +2351,14 @@ async def _run_operations_for_profile(profile: dict, operations: str,
         _log(f"[OPS][W{worker_id}] {email}: FATAL: {e}", 'error')
         return {'success': False, 'summary': f'Error: {str(e)[:100]}', 'op_results': {}}
     finally:
+        # NST: stop the NST browser (release the slot but keep session alive
+        # via cookies on disk — NO signout).
+        if engine == 'nst' and nst_profile_id:
+            try:
+                from shared.nexus_profile_manager import stop_nst_browser
+                await asyncio.to_thread(stop_nst_browser, nst_profile_id)
+            except Exception:
+                pass
         if stealth:
             try:
                 _loop = asyncio.new_event_loop(); _loop.run_until_complete(stealth.stop()); _loop.close()
@@ -2418,183 +2511,117 @@ async def _resolve_challenge(page, account: dict, worker_id: int):
 
 async def _dispatch_single_op(op: str, page, account: dict,
                                password_url: str, worker_id: int):
-    """Dispatch a single Step 1/2/3/4 operation. Returns result."""
-    import pandas as pd
+    """Dispatch a single operation. Returns result.
 
-    # ── Step 1 operations ──
-    if op == 'L1':
-        from step1.language_change import change_language_to_english_us
-        return await change_language_to_english_us(page, worker_id)
-    elif op == 'L2':
-        from step1.operations.activity_fix import fix_activity
-        return await fix_activity(page, worker_id)
-    elif op == 'L4':
-        from step1.operations.safe_browsing import set_safe_browsing
-        return await set_safe_browsing(page, worker_id, enabled=True)
-    elif op == 'L5':
-        from step1.operations.safe_browsing import set_safe_browsing
-        return await set_safe_browsing(page, worker_id, enabled=False)
-    elif op == 'L6':
-        from step1.operations.map_used import check_map_used
-        ok, val = await check_map_used(page, worker_id)
-        return f"MapUsed={val}" if ok else 'FAILED'
-    elif op == 'L7':
-        from step1.operations.gmail_year import get_gmail_creation_year
-        ok, val = await get_gmail_creation_year(page, worker_id)
-        return f"Year={val}" if ok else 'FAILED'
+    Operations are added incrementally — each one built, tested, and
+    confirmed before adding the next."""
 
-    # ── Step 2 operations ──
-    config = {'screenshots_dir': 'screenshots', 'worker_id': worker_id}
+    # ── Step 2: Account Security Operations ──
 
-    if op == '1':
-        from step2.operations.password_change import change_password
-        new_password = account.get('New Password', '')
-        if not new_password:
-            return 'SKIP - No new password'
-        result = await change_password(page, config, new_password, password_url)
-        if result is True:
-            account['Password'] = new_password
-        return result
-
-    elif op == '2a':
-        from step2.operations.recovery_phone import update_recovery_phone
-        raw = account.get('New Recovery Phone', '')
-        if not raw or (hasattr(pd, 'isna') and pd.isna(raw)):
-            return 'SKIP - No phone'
-        phones = [ph.strip() for ph in str(raw).split(',') if ph.strip()]
-        results = []
-        for ph in phones[:10]:
-            r = await update_recovery_phone(page, config, ph, password_url)
-            results.append(f"{ph}: {r}")
-        return ' | '.join(results) if len(results) > 1 else results[0] if results else 'SKIP'
+    if op == '2a':
+        _log(f"[OPS][W{worker_id}] Dispatching op 2a — importing test_operations...")
+        try:
+            from test_operations import add_recovery_phone
+            _log(f"[OPS][W{worker_id}] Import OK — calling add_recovery_phone()")
+            return await add_recovery_phone(page, account, worker_id)
+        except ImportError as e:
+            _log(f"[OPS][W{worker_id}] IMPORT FAILED: {e}", 'error')
+            # Try alternative import path
+            try:
+                import sys, os
+                root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if root not in sys.path:
+                    sys.path.insert(0, root)
+                    _log(f"[OPS][W{worker_id}] Added to sys.path: {root}")
+                from test_operations import add_recovery_phone
+                _log(f"[OPS][W{worker_id}] Import OK (after path fix)")
+                return await add_recovery_phone(page, account, worker_id)
+            except Exception as e2:
+                _log(f"[OPS][W{worker_id}] IMPORT FAILED (2nd try): {e2}", 'error')
+                return False
 
     elif op == '2b':
-        from step2.operations.recovery_phone_remove import remove_recovery_phone
-        return await remove_recovery_phone(page, config, password_url)
+        _log(f"[OPS][W{worker_id}] Dispatching op 2b — importing test_operations...")
+        try:
+            from test_operations import remove_recovery_phone
+            return await remove_recovery_phone(page, account, worker_id)
+        except ImportError as e:
+            _log(f"[OPS][W{worker_id}] IMPORT FAILED: {e}", 'error')
+            try:
+                import sys, os
+                root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if root not in sys.path:
+                    sys.path.insert(0, root)
+                from test_operations import remove_recovery_phone
+                return await remove_recovery_phone(page, account, worker_id)
+            except Exception as e2:
+                _log(f"[OPS][W{worker_id}] IMPORT FAILED (2nd try): {e2}", 'error')
+                return False
 
     elif op == '3a':
-        from step2.operations.recovery_email import update_recovery_email
-        raw = account.get('New Recovery Email', '')
-        if not raw or (hasattr(pd, 'isna') and pd.isna(raw)):
-            return 'SKIP - No email'
-        # Check recovery email usage (max 10 per email)
         try:
-            from shared.recovery_tracker import can_use_email, record_usage
+            from test_operations import add_recovery_email
+            return await add_recovery_email(page, account, worker_id)
         except ImportError:
-            can_use_email = lambda e: True
-            record_usage = lambda e: 0
-        emails = [em.strip() for em in str(raw).split(',') if em.strip()]
-        results = []
-        for em in emails[:10]:
-            if not can_use_email(em):
-                results.append(f"{em}: SKIP (limit 10 reached)")
-                continue
-            r = await update_recovery_email(page, config, em, password_url)
-            if r is True or (isinstance(r, str) and 'success' in str(r).lower()):
-                record_usage(em)
-            results.append(f"{em}: {r}")
-        return ' | '.join(results) if len(results) > 1 else results[0] if results else 'SKIP'
+            try:
+                import sys, os
+                root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if root not in sys.path:
+                    sys.path.insert(0, root)
+                from test_operations import add_recovery_email
+                return await add_recovery_email(page, account, worker_id)
+            except Exception as e2:
+                _log(f"[OPS][W{worker_id}] IMPORT FAILED (3a): {e2}", 'error')
+                return False
 
     elif op == '3b':
-        from step2.operations.recovery_email_remove import remove_recovery_email
-        return await remove_recovery_email(page, config, password_url)
+        try:
+            from test_operations import remove_recovery_email
+            return await remove_recovery_email(page, account, worker_id)
+        except ImportError:
+            try:
+                import sys, os
+                root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if root not in sys.path:
+                    sys.path.insert(0, root)
+                from test_operations import remove_recovery_email
+                return await remove_recovery_email(page, account, worker_id)
+            except Exception as e2:
+                _log(f"[OPS][W{worker_id}] IMPORT FAILED (3b): {e2}", 'error')
+                return False
 
-    elif op == '4a':
-        from step2.operations.authenticator import change_authenticator_app
-        return await change_authenticator_app(page, config, password_url)
+    # ── Step 1: Language & Activity Operations ──
 
-    elif op == '4b':
-        from step2.operations.authenticator_remove import remove_authenticator_app
-        return await remove_authenticator_app(page, config, password_url)
+    elif op == 'L1':
+        _log(f"[OPS][W{worker_id}] Dispatching op L1 — Change Language to English (US)")
+        try:
+            from step1.language_change import change_language_to_english_us
+            return await change_language_to_english_us(page, worker_id)
+        except Exception as e:
+            _log(f"[OPS][W{worker_id}] L1 FAILED: {e}", 'error')
+            return False
 
-    elif op == '5a':
-        from step2.operations.backup_codes import generate_backup_codes
-        return await generate_backup_codes(page, config, password_url)
+    elif op == 'L3':
+        _log(f"[OPS][W{worker_id}] Dispatching op L3 — Change Language to Français (France)")
+        try:
+            from step1.language_change import change_language_to_french
+            return await change_language_to_french(page, worker_id)
+        except Exception as e:
+            _log(f"[OPS][W{worker_id}] L3 FAILED: {e}", 'error')
+            return False
 
-    elif op == '5b':
-        from step2.operations.backup_codes_remove import remove_backup_codes
-        return await remove_backup_codes(page, config, password_url)
-
-    elif op == '6a':
-        from step2.operations.phone_2fa import add_and_replace_2fa_phone
-        raw = account.get('New 2FA Phone', '')
-        if not raw:
-            return 'SKIP - No 2FA phone'
-        return await add_and_replace_2fa_phone(page, config, str(raw), password_url)
-
-    elif op == '6b':
-        from step2.operations.phone_2fa_remove import remove_2fa_phone
-        return await remove_2fa_phone(page, config, password_url)
-
-    elif op == '7':
-        from step2.operations.remove_devices import remove_all_devices
-        return await remove_all_devices(page, config, password_url, account=account)
-
-    elif op == '8':
-        from step2.operations.name_change import change_name
-        first = account.get('First Name', '')
-        last = account.get('Last Name', '')
-        # If no name provided, generate random name by country
-        if not (first or last):
-            country = account.get('Name Country', 'US')
-            from shared.random_names import get_random_name
-            first, last = get_random_name(country)
-            _log(f"[OPS][W{worker_id}] Random name generated: {first} {last} ({country})")
-        return await change_name(page, config, str(first), str(last), password_url)
-
-    elif op == '9':
-        from step2.operations.security_checkup import security_checkup
-        return await security_checkup(page, config, password_url)
-
-    elif op == '10a':
-        from step2.operations.enable_2fa import enable_2fa
-        return await enable_2fa(page, config, password_url)
-
-    elif op == '10b':
-        from step2.operations.disable_2fa import disable_2fa
-        return await disable_2fa(page, config, password_url)
-
-    # ── Step 3 operations ──
-    elif op == 'R1':
-        from step3.operations.delete_all_reviews import delete_all_reviews
-        ok = await delete_all_reviews(page, worker_id)
-        return 'OK' if ok else 'FAILED'
+    # ── Step 3: Maps Reviews ──
 
     elif op == 'R2':
-        from step3.operations.delete_not_posted_reviews import delete_not_posted_reviews
-        ok = await delete_not_posted_reviews(page, worker_id)
-        return 'OK' if ok else 'FAILED'
+        _log(f"[OPS][W{worker_id}] Dispatching op R2 — Delete Draft (not-posted) Reviews")
+        try:
+            from step3.operations.delete_not_posted_reviews import delete_not_posted_reviews
+            return await delete_not_posted_reviews(page, worker_id)
+        except Exception as e:
+            _log(f"[OPS][W{worker_id}] R2 FAILED: {e}", 'error')
+            return False
 
-    elif op == 'R4':
-        from step3.operations.profile_lock import set_profile_lock
-        ok = await set_profile_lock(page, worker_id, locked=True)
-        return 'OK' if ok else 'FAILED'
-
-    elif op == 'R5':
-        from step3.operations.profile_lock import set_profile_lock
-        ok = await set_profile_lock(page, worker_id, locked=False)
-        return 'OK' if ok else 'FAILED'
-
-    elif op == 'R6':
-        from step3.operations.get_review_link import get_review_link
-        result = await get_review_link(page, worker_id)
-        if result.get('success'):
-            return f"Link={result.get('share_link', '')}"
-        return result.get('summary', 'FAILED')
-
-    # ── Step 4 operations ──
-    elif op == 'A1':
-        from step4.operations.do_all_appeal import do_all_appeal
-        result = await do_all_appeal(page, worker_id)
-        return result.get('summary', 'OK' if result.get('success') else 'FAILED')
-
-    elif op == 'A2':
-        from step4.operations.delete_refused_appeal import delete_refused_appeal
-        result = await delete_refused_appeal(page, worker_id)
-        return result.get('summary', 'OK' if result.get('success') else 'FAILED')
-
-    else:
-        return f'SKIP - Unknown op: {op}'
+    return f'SKIP - Unknown op: {op}'
 
 
 def _generate_ops_report(results: list[dict], operations: str) -> str:

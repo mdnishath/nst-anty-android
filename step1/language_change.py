@@ -122,10 +122,14 @@ async def change_language_to_english_us(page, worker_id) -> bool:
         return False
 
 
-async def _delete_extra_languages(page, worker_id):
+async def _delete_extra_languages(page, worker_id, keep_lang_label: str = 'English'):
     """
-    Delete all non-English language entries from the 'Other languages' list
+    Delete all non-primary language entries from the 'Other languages' list
     and turn off the 'Automatically add languages' toggle.
+
+    Args:
+        keep_lang_label: Label substring of the language to keep (display only —
+                         the primary language list is never touched).
     """
     try:
         _log(worker_id, "DEL_LANG: Scanning for extra languages to delete...")
@@ -227,3 +231,123 @@ async def _delete_extra_languages(page, worker_id):
 
     except Exception as e:
         _log(worker_id, f"DEL_LANG ERROR: {e}")
+
+
+async def change_language_to_french(page, worker_id) -> bool:
+    """
+    Change account language to Français (France) and clean up extra languages.
+
+    Steps:
+      A. Click Edit button (jsname="Pr7Yme")
+      B. Type "français" in search input
+      C. Select first French option from dropdown
+      D. Scroll and click France in country list
+      E. Click Save/Select
+      F. Verify by navigating to Gmail inbox
+      G. Return to language page and delete all extra (non-French) languages
+    """
+    try:
+        language_url = "https://myaccount.google.com/language"
+
+        _log(worker_id, "LANG-FR[A]: Navigating to language settings page...")
+        await robust_goto(page, language_url, worker_id=worker_id)
+
+        # ── A: Click Edit language button ─────────────────────────────────
+        _log(worker_id, "LANG-FR[A]: Looking for Edit language button...")
+
+        if not await find_and_click(page, [
+            'ul.u7hyyf button[jsname="Pr7Yme"]',
+            'button[aria-haspopup="true"][jsname="Pr7Yme"]',
+            '.pYTkkf-Bz112c-LgbsSe[jsname="Pr7Yme"]',
+        ], worker_id=worker_id, label="Edit language button", post_click_sleep=2):
+            _log(worker_id, "LANG-FR[A]: FAILED - Could not find Edit language button")
+            return False
+
+        # ── B: Type "français" in the search input ────────────────────────
+        _log(worker_id, "LANG-FR[B]: Looking for language search input...")
+
+        if not await find_and_fill(page, [
+            'input[jsname="YPqjbf"]',
+            'input.whsOnd',
+            'input[type="text"]:not([name="q"])',
+            'div[role="dialog"] input',
+            'input:not([name="q"])',
+        ], "français", worker_id=worker_id, label="Language search input",
+           clear_first=True, use_keyboard=True, post_fill_sleep=2):
+            _log(worker_id, "LANG-FR[B]: WARNING - fill failed, trying alternate spelling")
+            # Fallback to ASCII spelling — Google indexes both
+            await find_and_fill(page, [
+                'input[jsname="YPqjbf"]',
+                'input.whsOnd',
+                'input[type="text"]:not([name="q"])',
+                'div[role="dialog"] input',
+            ], "francais", worker_id=worker_id, label="Language search input (ASCII)",
+               clear_first=True, use_keyboard=True, post_fill_sleep=2)
+
+        # ── C: Click Français from the first list ─────────────────────────
+        _log(worker_id, "LANG-FR[C]: Looking for Français option in dropdown...")
+
+        if not await find_and_click(page, [
+            '[role="listbox"] [role="option"]',
+            'ul[role="listbox"] li',
+            'ul[jsname="hsfjDf"] li',
+            'div[role="dialog"] li',
+        ], worker_id=worker_id, label="Français option", post_click_sleep=2):
+            _log(worker_id, "LANG-FR[C]: WARNING - Keyboard fallback (ArrowDown + Enter)")
+            await page.keyboard.press("ArrowDown")
+            await asyncio.sleep(0.5)
+            await page.keyboard.press("Enter")
+            await asyncio.sleep(2)
+
+        # ── D: Select France from the country dropdown ────────────────────
+        _log(worker_id, "LANG-FR[D]: Looking for France country option...")
+
+        if not await find_and_click(page, [
+            'li[data-value="fr-FR"]',
+            'li[data-id="fr-FR"]',
+            'li[aria-label*="France" i]:not([aria-label*="Polynésie" i]):not([aria-label*="Polynesia" i])',
+            '[role="listbox"] li:has-text("France")',
+            '[role="listbox"] li',
+        ], worker_id=worker_id, label="France option", post_click_sleep=2):
+            _log(worker_id, "LANG-FR[D]: WARNING - Keyboard fallback (typing 'France')")
+            await page.keyboard.type("France")
+            await asyncio.sleep(1)
+            await page.keyboard.press("Enter")
+
+        # ── E: Click Save / Select ─────────────────────────────────────────
+        _log(worker_id, "LANG-FR[E]: Looking for Save/Select button...")
+
+        if not await find_and_click(page, [
+            'button[data-mdc-dialog-action="x8hlje"]',
+            'button:has-text("Save")', 'button:has-text("Select")',
+            'button:has-text("Enregistrer")', 'button:has-text("Sélectionner")',
+            'button:has-text("OK")',
+            'div[role="dialog"] button.LgbsSe-OWXEXe-k8QpJ:last-child',
+            'div[role="dialog"] button:last-child',
+        ], worker_id=worker_id, label="Save/Select button", post_click_sleep=2):
+            _log(worker_id, "LANG-FR[E]: WARNING - No Save button found!")
+
+        await asyncio.sleep(1)
+        _log(worker_id, f"LANG-FR[E]: After save. URL = {page.url[:100]}")
+
+        # ── F: Verify — navigate to Gmail inbox ───────────────────────────
+        _log(worker_id, "LANG-FR[F]: Navigating to Gmail inbox to verify language change...")
+        await robust_goto(page, "https://mail.google.com/mail/u/0/#inbox", worker_id=worker_id)
+
+        current_url = page.url
+        if "mail.google.com" in current_url:
+            _log(worker_id, "LANG-FR[F]: SUCCESS - Gmail inbox loaded, language change confirmed")
+        else:
+            _log(worker_id, f"LANG-FR[F]: WARNING - Not on inbox URL: {current_url[:80]}")
+
+        # ── G: Delete all extra (non-French) languages ────────────────────
+        _log(worker_id, "LANG-FR[G]: Returning to language page to delete extra languages...")
+        await robust_goto(page, language_url, worker_id=worker_id)
+        await _delete_extra_languages(page, worker_id, keep_lang_label='Français')
+        _log(worker_id, "LANG-FR[G]: Extra language cleanup done")
+
+        return True
+
+    except Exception as e:
+        _log(worker_id, f"LANG-FR ERROR: {e}")
+        return False

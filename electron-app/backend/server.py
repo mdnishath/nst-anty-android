@@ -2153,6 +2153,8 @@ def profiles_create():
     password = data.get('password', '')
     totp_secret = data.get('totp_secret', '')
     backup_codes = data.get('backup_codes', [])
+    recovery_email = data.get('recovery_email', '').strip()
+    recovery_phone = data.get('recovery_phone', '').strip()
     # Pass full overview/hardware/advanced from frontend (if user edited them)
     frontend_sections = {}
     if data.get('overview'):
@@ -2169,6 +2171,7 @@ def profiles_create():
         name, email, proxy=proxy, notes=notes,
         fingerprint_prefs=fingerprint_prefs,
         password=password, totp_secret=totp_secret, backup_codes=backup_codes,
+        recovery_email=recovery_email, recovery_phone=recovery_phone,
         frontend_sections=frontend_sections,
         engine=engine,
     )
@@ -2332,6 +2335,22 @@ def profiles_cleanup():
     """Delete orphan profile folders not in profiles.json."""
     result = profile_manager.cleanup_orphans()
     return jsonify({'success': True, **result})
+
+
+@app.route('/api/profiles/restore-from-nst', methods=['POST'])
+def profiles_restore_from_nst():
+    """Recover profiles missing from local profiles.json by pulling them from NST.
+
+    Body: {"group": "Sanjid" (optional), "dry_run": true|false (default false)}
+    """
+    body = request.get_json(silent=True) or {}
+    group = body.get('group') or None
+    dry_run = bool(body.get('dry_run', False))
+    try:
+        result = profile_manager.restore_missing_from_nst(group=group, dry_run=dry_run)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/profiles/<profile_id>/status', methods=['GET'])
