@@ -2180,6 +2180,32 @@
         } catch (e) { App.toast('Auto-backup error: ' + e.message, 'error'); }
     }
 
+    async function doDriveReauthorize() {
+        if (!confirm('Re-authorize Google Drive?\n\nA browser tab will open for you to log in and grant access. Once you finish, this app will continue automatically.\n\nUse this if you see "invalid_grant" errors.')) return;
+        const btn = document.getElementById('driveReauthBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Waiting for browser…'; }
+        App.toast('Opening browser for Drive login…', 'info');
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/drive/reauthorize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+            });
+            const d = await r.json();
+            if (d.success) {
+                App.toast('Drive re-authorized ✓', 'success');
+                await loadDriveStatus();
+                await loadDriveBackups();
+            } else {
+                App.toast(d.message || 'Re-auth failed', 'error');
+            }
+        } catch (e) {
+            App.toast('Re-auth error: ' + e.message, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-key"></i> Re-authorize'; }
+        }
+    }
+
     function setupDriveBackupModal() {
         const close = (id) => {
             const el = document.getElementById(id);
@@ -2189,6 +2215,7 @@
         document.getElementById('driveBackupModalCancelBtn')?.addEventListener('click', () => close('driveBackupModal'));
         document.getElementById('driveBackupNowBtn')?.addEventListener('click', doDriveBackupNow);
         document.getElementById('driveBackupRefreshBtn')?.addEventListener('click', loadDriveBackups);
+        document.getElementById('driveReauthBtn')?.addEventListener('click', doDriveReauthorize);
         document.getElementById('driveAutoBackupToggle')?.addEventListener('change', setAutoBackup);
         document.getElementById('driveAutoBackupInterval')?.addEventListener('change', setAutoBackup);
     }

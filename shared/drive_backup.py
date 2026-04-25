@@ -294,6 +294,32 @@ def restore(resources_path, file_id: str) -> dict:
     }
 
 
+def reauthorize(resources_path, port: int = 8599) -> dict:
+    """Run the OAuth2 desktop flow — opens system browser, waits for the
+    user to log in + consent, writes a fresh token to gdrive_token.json.
+    Blocks until the user completes the flow (or closes the browser).
+    Used when the existing token is expired/revoked (`invalid_grant`)."""
+    cred_path = Path(resources_path) / 'config' / 'gdrive_credentials.json'
+    if not cred_path.exists():
+        return {'success': False,
+                'message': ('config/gdrive_credentials.json missing — '
+                            'this OAuth client file ships separately.')}
+    try:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+    except Exception as e:
+        return {'success': False,
+                'message': f'google-auth-oauthlib not available: {e}'}
+
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file(str(cred_path), SCOPES)
+        creds = flow.run_local_server(port=port, prompt='consent', open_browser=True)
+        token_path = Path(resources_path) / 'config' / 'gdrive_token.json'
+        token_path.write_text(creds.to_json(), encoding='utf-8')
+        return {'success': True, 'message': 'Drive re-authorized successfully'}
+    except Exception as e:
+        return {'success': False, 'message': f'Re-auth failed: {e}'}
+
+
 def set_auto_backup(resources_path, enabled: bool, interval_hours: int = 24) -> dict:
     cfg = _load_gdrive_config(resources_path)
     cfg['auto_backup_profiles'] = bool(enabled)

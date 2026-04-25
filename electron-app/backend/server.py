@@ -2434,6 +2434,30 @@ def profiles_drive_restore():
     return jsonify(_drive_backup.restore(RESOURCES_PATH, file_id))
 
 
+@app.route('/api/profiles/drive/reauthorize', methods=['POST'])
+def profiles_drive_reauthorize():
+    """Run OAuth2 in a background thread so the request doesn't time out
+    while we wait for the user to log in via their browser."""
+    import threading
+    state = {'done': False, 'result': None}
+
+    def _worker():
+        try:
+            state['result'] = _drive_backup.reauthorize(RESOURCES_PATH)
+        except Exception as e:
+            state['result'] = {'success': False, 'message': str(e)}
+        state['done'] = True
+
+    t = threading.Thread(target=_worker, daemon=True, name='drive-reauth')
+    t.start()
+    # Wait up to 3 minutes for the user to complete the flow
+    t.join(timeout=180)
+    if not state['done']:
+        return jsonify({'success': False,
+                        'message': 'Timed out waiting for OAuth consent. Try again.'})
+    return jsonify(state['result'])
+
+
 @app.route('/api/profiles/drive/auto-backup', methods=['POST'])
 def profiles_drive_auto_backup():
     body = request.get_json(silent=True) or {}

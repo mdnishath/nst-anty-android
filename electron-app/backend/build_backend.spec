@@ -85,6 +85,7 @@ a = Analysis(
         'google.oauth2', 'google.oauth2.credentials',
         'googleapiclient', 'googleapiclient.discovery',
         'googleapiclient.http', 'googleapiclient._auth',
+        'google_auth_oauthlib', 'google_auth_oauthlib.flow',
 
         # ── Bot entry scripts (dynamically imported in main_entry.py) ────────
         'gmail_bot_step1', 'gmail_bot_step2', 'gmail_bot_step3', 'gmail_bot_step4',
