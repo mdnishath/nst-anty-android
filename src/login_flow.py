@@ -362,25 +362,38 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
         # ── Page-ready guard ──────────────────────────────────────────────
         # When N>=10 workers hit Google's identifier endpoint at the same
         # time over a slow residential proxy, the FIRST page load often
-        # arrives partially hydrated — the email field may not be wired up
-        # to JS yet, so when we click Next the form submission gets lost
-        # and the page sits "loading" forever. The user verified that a
-        # manual page reload before entering email always recovers.
-        # We do that automatically now: wait for networkidle, and if the
-        # email field isn't interactive within 6s, force one reload.
-        try:
-            await page.wait_for_load_state('networkidle', timeout=6000)
-            _log(worker_id, "STEP[2/4] EMAIL: page reached networkidle")
-        except Exception:
-            _log(worker_id, "STEP[2/4] EMAIL: networkidle wait timed out — forcing reload to clear stuck loader")
+        # arrives partially hydrated. networkidle is unreliable here because
+        # Google's pages keep long-polling connections open. Instead we wait
+        # for the email field to be both VISIBLE and ENABLED (= JS bound to
+        # it). If it's not interactive within 8s, force one full reload.
+        async def _email_field_ready() -> bool:
+            for sel in ('#identifierId', 'input[type="email"]', 'input[name="identifier"]'):
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() == 0:
+                        continue
+                    if await el.is_visible(timeout=500) and await el.is_enabled(timeout=500):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        _ready = False
+        for _i in range(8):
+            if await _email_field_ready():
+                _ready = True
+                break
+            await asyncio.sleep(1)
+
+        if not _ready:
+            _log(worker_id, "STEP[2/4] EMAIL: field not interactive after 8s — forcing reload to clear stuck loader")
             try:
                 await page.reload(wait_until='domcontentloaded', timeout=45000)
-                # After reload give it some breathing room + try networkidle again
-                try:
-                    await page.wait_for_load_state('networkidle', timeout=8000)
-                except Exception:
-                    pass
-                await asyncio.sleep(2)
+                # Give the reload time to wire up listeners
+                for _i in range(10):
+                    if await _email_field_ready():
+                        break
+                    await asyncio.sleep(1)
                 _log(worker_id, f"STEP[2/4] EMAIL: post-reload URL = {page.url[:100]}")
             except Exception as _rl_err:
                 _log(worker_id, f"STEP[2/4] EMAIL: pre-emptive reload failed (continuing): {_rl_err}")
@@ -419,8 +432,23 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                     count = await elem.count()
                     visible = await elem.is_visible() if count > 0 else False
                     if count > 0 and visible:
-                        await elem.fill(email)
-                        _log(worker_id, f"STEP[2/4] EMAIL: Filled email via '{sel}' (attempt {email_attempt})")
+                        # Real keyboard interaction — fires focus/input/keydown/keyup
+                        # events that Google's React form actually listens for. Pure
+                        # .fill() sets .value but skips many of those events, which
+                        # is why on a partially-hydrated page the Next button stays
+                        # broken even though the value looks right.
+                        try:
+                            await elem.click(timeout=3000)              # focus + activate listeners
+                        except Exception:
+                            pass
+                        try:
+                            await elem.fill('')                          # clear any residual value
+                        except Exception:
+                            pass
+                        # Type with a small per-char delay so each keystroke
+                        # fires its own input event — same as a real human.
+                        await page.keyboard.type(email, delay=25)
+                        _log(worker_id, f"STEP[2/4] EMAIL: Typed email via '{sel}' (attempt {email_attempt})")
                         email_filled = True
                         break
                 except Exception as e:
@@ -497,8 +525,9 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
             raise Exception("Could not enter email - input field not found")
 
         await asyncio.sleep(1)
-        _log(worker_id, "STEP[2/4] EMAIL: Clicking Next button...")
-        # Use #identifierNext (language-independent) with text fallback
+        # Submit primarily via keyboard Enter — works even when the Next
+        # button is half-hydrated and clicks get dropped. Click is kept as
+        # a fallback if Enter doesn't trigger the URL transition.
         _email_next_sels = [
             '#identifierNext', 'button[jsname="LgbsSe"]',
             'button:has-text("Next")', 'button:has-text("Suivant")',
@@ -506,18 +535,39 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
             'button[type="submit"]',
         ]
         _clicked_email_next = False
-        for _sel in _email_next_sels:
-            try:
-                _btn = page.locator(_sel).first
-                if await _btn.is_visible(timeout=2000):
-                    await _btn.click()
-                    _clicked_email_next = True
-                    break
-            except Exception:
-                continue
-        if not _clicked_email_next:
-            # Last resort: click any visible button-like element
-            await page.locator('#identifierNext, button[type="submit"]').first.click(timeout=5000)
+        try:
+            _log(worker_id, "STEP[2/4] EMAIL: Submitting via Enter key...")
+            await page.keyboard.press('Enter')
+            _clicked_email_next = True
+            await asyncio.sleep(2)
+        except Exception as _kerr:
+            _log(worker_id, f"STEP[2/4] EMAIL: Enter press failed: {_kerr}")
+
+        # If the URL hasn't changed after Enter, fall back to clicking Next
+        try:
+            _post_enter_url = page.url
+            _still_on_id = '/identifier' in _post_enter_url and not await page.locator(
+                'input[type="password"]'
+            ).first.is_visible(timeout=800)
+        except Exception:
+            _still_on_id = True
+
+        if _still_on_id:
+            _log(worker_id, "STEP[2/4] EMAIL: Enter didn't transition page — clicking Next button")
+            for _sel in _email_next_sels:
+                try:
+                    _btn = page.locator(_sel).first
+                    if await _btn.is_visible(timeout=2000):
+                        await _btn.click()
+                        _clicked_email_next = True
+                        break
+                except Exception:
+                    continue
+            if not _clicked_email_next:
+                try:
+                    await page.locator('#identifierNext, button[type="submit"]').first.click(timeout=5000)
+                except Exception:
+                    pass
         _log(worker_id, "STEP[2/4] EMAIL: Clicked Next. Waiting for page transition (proxy latency)...")
         await asyncio.sleep(8)
         _log(worker_id, f"STEP[2/4] EMAIL: After Next. URL = {page.url[:100]}")
