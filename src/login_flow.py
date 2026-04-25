@@ -359,44 +359,28 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
         # ============================================================
         _log(worker_id, "STEP[2/4] EMAIL: Looking for email input field...")
 
-        # ── Page-ready guard ──────────────────────────────────────────────
-        # When N>=10 workers hit Google's identifier endpoint at the same
-        # time over a slow residential proxy, the FIRST page load often
-        # arrives partially hydrated. networkidle is unreliable here because
-        # Google's pages keep long-polling connections open. Instead we wait
-        # for the email field to be both VISIBLE and ENABLED (= JS bound to
-        # it). If it's not interactive within 8s, force one full reload.
+        # ── Page-ready guard (LIGHT) ──────────────────────────────────────
+        # User strategy: skip the pre-emptive reload (it wastes time when
+        # the page is fine). Just wait briefly for the email field to be
+        # visible — that's enough. The real stuck-detection happens AFTER
+        # email submit (2-3s window), where it's reliable and cheap.
         async def _email_field_ready() -> bool:
             for sel in ('#identifierId', 'input[type="email"]', 'input[name="identifier"]'):
                 try:
                     el = page.locator(sel).first
                     if await el.count() == 0:
                         continue
-                    if await el.is_visible(timeout=500) and await el.is_enabled(timeout=500):
+                    if await el.is_visible(timeout=400) and await el.is_enabled(timeout=400):
                         return True
                 except Exception:
                     continue
             return False
 
-        _ready = False
-        for _i in range(8):
+        for _i in range(10):
             if await _email_field_ready():
-                _ready = True
                 break
-            await asyncio.sleep(1)
-
-        if not _ready:
-            _log(worker_id, "STEP[2/4] EMAIL: field not interactive after 8s — forcing reload to clear stuck loader")
-            try:
-                await page.reload(wait_until='domcontentloaded', timeout=45000)
-                # Give the reload time to wire up listeners
-                for _i in range(10):
-                    if await _email_field_ready():
-                        break
-                    await asyncio.sleep(1)
-                _log(worker_id, f"STEP[2/4] EMAIL: post-reload URL = {page.url[:100]}")
-            except Exception as _rl_err:
-                _log(worker_id, f"STEP[2/4] EMAIL: pre-emptive reload failed (continuing): {_rl_err}")
+            await asyncio.sleep(0.6)
+        _log(worker_id, "STEP[2/4] EMAIL: field ready (or proceeding anyway)")
 
         # Pre-check: dismiss language prompt / cookie consent if present
         try:
@@ -625,12 +609,15 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                 await asyncio.sleep(0.5)
             return False
 
-        # Initial transition wait — proxy can be slow, so give it 25s on
-        # first try. Polling exits early as soon as page actually moves.
-        progressed = await _wait_for_transition(budget_seconds=25)
+        # User-specified strategy: stuck detection in a TIGHT 3-second
+        # window. If the next screen (password / challenge / captcha /
+        # error) doesn't appear within 3s of pressing Enter, the page is
+        # definitely stuck — reload + retype email. This catches stuck
+        # workers fast instead of wasting 25s waiting hopelessly.
+        progressed = await _wait_for_transition(budget_seconds=3)
 
         if not progressed:
-            _log(worker_id, "STEP[2/4] EMAIL: no transition in 25s — entering hard-recovery loop")
+            _log(worker_id, "STEP[2/4] EMAIL: no transition in 3s — STUCK detected, reloading + retyping")
 
         # Up to 4 hard-recovery cycles. Each one:
         #   1. window.stop() to kill any in-flight network requests
@@ -720,12 +707,12 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                     except Exception:
                         continue
 
-            # Wait for transition again — same event-driven polling, longer budget
-            progressed = await _wait_for_transition(budget_seconds=20)
+            # Wait for transition again — same tight 3s budget per user spec
+            progressed = await _wait_for_transition(budget_seconds=3)
             if progressed:
                 _log(worker_id, f"STEP[2/4] EMAIL: transitioned after recovery attempt {_stuck_attempt}/4")
                 break
-            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt}/4")
+            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt}/4 — retrying")
 
         if not progressed:
             _log(worker_id, "STEP[2/4] EMAIL: FAILED to transition after 4 recovery attempts — failing this profile")
