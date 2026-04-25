@@ -2031,6 +2031,168 @@
         } catch (e) { App.toast('Cleanup error', 'error'); }
     }
 
+    // ── Google Drive backup / restore ──────────────────────────────────────
+    function openDriveBackupModal() {
+        const modal = document.getElementById('driveBackupModal');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        loadDriveStatus();
+        loadDriveBackups();
+    }
+
+    async function loadDriveStatus() {
+        const el = document.getElementById('driveBackupStatus');
+        if (!el) return;
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/drive/status');
+            const s = await r.json();
+            const tgl = document.getElementById('driveAutoBackupToggle');
+            const ivl = document.getElementById('driveAutoBackupInterval');
+            if (tgl) tgl.checked = !!s.auto_backup;
+            if (ivl) ivl.value = s.auto_backup_interval_hours || 24;
+            if (s.configured) {
+                el.innerHTML = '<i class="fas fa-check-circle" style="color:#22c55e;"></i> ' +
+                    'Drive connected — backups go to folder ' +
+                    '<code style="background:#1e293b;padding:1px 6px;border-radius:3px;font-size:11px;">' +
+                    (s.folder_id || '?').slice(0, 12) + '…</code>';
+            } else {
+                let why = '';
+                if (!s.has_token) why = 'OAuth token missing — run <code>python tools/gdrive_setup.py</code> on the host.';
+                else if (!s.folder_id) why = 'No folder_id in <code>config/gdrive.json</code>.';
+                el.innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> ' +
+                    'Drive NOT configured. ' + why;
+            }
+        } catch (e) {
+            el.innerHTML = '<i class="fas fa-times-circle" style="color:#ef4444;"></i> ' +
+                'Could not reach backend: ' + e.message;
+        }
+    }
+
+    async function loadDriveBackups() {
+        const list = document.getElementById('driveBackupList');
+        if (!list) return;
+        list.innerHTML = '<div style="padding:18px;text-align:center;color:#64748b;font-size:12px;">' +
+                         '<i class="fas fa-spinner fa-spin"></i> Loading&hellip;</div>';
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/drive/backups');
+            const d = await r.json();
+            if (!d.success && d.message) {
+                list.innerHTML = '<div style="padding:14px;color:#fca5a5;font-size:12px;">' + d.message + '</div>';
+                return;
+            }
+            const backups = d.backups || [];
+            if (!backups.length) {
+                list.innerHTML = '<div style="padding:24px;text-align:center;color:#64748b;font-size:12px;">' +
+                    'No backups yet. Click "Backup Now" to create your first one.</div>';
+                return;
+            }
+            list.innerHTML = backups.map((b, i) => {
+                const created = b.created ? new Date(b.created).toLocaleString() : '—';
+                const sizeKb = b.size ? (b.size / 1024).toFixed(1) + ' KB' : '?';
+                const cnt = b.profiles_count != null ? b.profiles_count + ' profiles' : '? profiles';
+                const isLatest = i === 0;
+                return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #1e293b;">' +
+                    '<div style="flex:1;min-width:0;">' +
+                        '<div style="font-size:13px;color:#e2e8f0;font-weight:500;">' +
+                            (isLatest ? '<span style="display:inline-block;background:#22c55e;color:#0f1629;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;margin-right:6px;">LATEST</span>' : '') +
+                            cnt +
+                        '</div>' +
+                        '<div style="font-size:11px;color:#94a3b8;margin-top:2px;font-family:monospace;">' +
+                            created + ' &middot; ' + sizeKb +
+                        '</div>' +
+                    '</div>' +
+                    '<button class="btn btn-secondary btn-sm" data-restore-id="' + b.id + '" data-restore-name="' + (b.profiles_count || '?') + ' profiles">' +
+                        '<i class="fas fa-cloud-download-alt"></i> Restore' +
+                    '</button>' +
+                '</div>';
+            }).join('');
+            // Wire up restore buttons
+            list.querySelectorAll('button[data-restore-id]').forEach(btn => {
+                btn.addEventListener('click', () => doRestoreFromDrive(
+                    btn.getAttribute('data-restore-id'),
+                    btn.getAttribute('data-restore-name')
+                ));
+            });
+        } catch (e) {
+            list.innerHTML = '<div style="padding:14px;color:#fca5a5;font-size:12px;">Error: ' + e.message + '</div>';
+        }
+    }
+
+    async function doDriveBackupNow() {
+        const btn = document.getElementById('driveBackupNowBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading…'; }
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/drive/backup', { method: 'POST' });
+            const d = await r.json();
+            if (d.success) {
+                App.toast('Backup uploaded ✓ ' + d.profiles_count + ' profiles', 'success');
+                await loadDriveBackups();
+            } else {
+                App.toast(d.message || 'Backup failed', 'error');
+            }
+        } catch (e) {
+            App.toast('Backup error: ' + e.message, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Backup Now'; }
+        }
+    }
+
+    async function doRestoreFromDrive(fileId, label) {
+        if (!confirm('Restore profiles from this backup?\n\n' +
+                     'Backup: ' + label + '\n\n' +
+                     'Your CURRENT profiles.json will be saved as a local .bak file ' +
+                     'before being replaced. The app will reload after restore.')) return;
+        App.toast('Downloading backup…', 'info');
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/drive/restore', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_id: fileId })
+            });
+            const d = await r.json();
+            if (d.success) {
+                App.toast('Restored ' + d.restored_count + ' profiles ✓ Reloading…', 'success');
+                setTimeout(() => location.reload(), 800);
+            } else {
+                App.toast(d.message || 'Restore failed', 'error');
+            }
+        } catch (e) {
+            App.toast('Restore error: ' + e.message, 'error');
+        }
+    }
+
+    async function setAutoBackup() {
+        const tgl = document.getElementById('driveAutoBackupToggle');
+        const ivl = document.getElementById('driveAutoBackupInterval');
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/drive/auto-backup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    enabled: tgl ? tgl.checked : false,
+                    interval_hours: ivl ? parseInt(ivl.value, 10) || 24 : 24,
+                })
+            });
+            const d = await r.json();
+            if (d.success) {
+                App.toast(d.auto_backup ? 'Auto-backup ON' : 'Auto-backup OFF', 'success');
+            }
+        } catch (e) { App.toast('Auto-backup error: ' + e.message, 'error'); }
+    }
+
+    function setupDriveBackupModal() {
+        const close = (id) => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        };
+        document.getElementById('driveBackupModalClose')?.addEventListener('click', () => close('driveBackupModal'));
+        document.getElementById('driveBackupModalCancelBtn')?.addEventListener('click', () => close('driveBackupModal'));
+        document.getElementById('driveBackupNowBtn')?.addEventListener('click', doDriveBackupNow);
+        document.getElementById('driveBackupRefreshBtn')?.addEventListener('click', loadDriveBackups);
+        document.getElementById('driveAutoBackupToggle')?.addEventListener('change', setAutoBackup);
+        document.getElementById('driveAutoBackupInterval')?.addEventListener('change', setAutoBackup);
+    }
+
     async function restoreFromNst() {
         // Step 1: dry-run to see what's missing
         App.toast('Scanning NST for missing profiles…', 'info');
@@ -2695,6 +2857,8 @@
         _btn('profileCloseAllBtn', closeAllProfiles);
         _btn('profileCleanupBtn', cleanupOrphans);
         _btn('profileRestoreNstBtn', restoreFromNst);
+        _btn('profileDriveBackupBtn', openDriveBackupModal);
+        setupDriveBackupModal();
         _btn('profileBatchLoginBtn', openBatchLoginModal);
         _btn('profileRunOpsBtn', openRunOpsModal);
         _setupRunOpsModal();

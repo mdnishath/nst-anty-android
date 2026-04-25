@@ -613,6 +613,7 @@
 
                 <!-- Management group -->
                 <div class="pm-action-group-btns" style="gap:6px;">
+                    <button class="btn btn-secondary btn-sm" id="profileDriveBackupBtn" title="Backup profiles to Google Drive / restore from a previous backup"><i class="fab fa-google-drive"></i> Drive Backup</button>
                     <button class="btn btn-secondary btn-sm" id="profileRestoreNstBtn" title="Recover profiles missing from local registry by pulling them from NST Browser"><i class="fas fa-cloud-download-alt"></i> Restore from NST</button>
                     <button class="btn btn-secondary btn-sm" id="profileCloseAllBtn"><i class="fas fa-stop-circle"></i> Close All</button>
                     <button class="btn btn-secondary btn-sm" id="profileCleanupBtn"><i class="fas fa-broom"></i> Cleanup</button>
@@ -1724,6 +1725,55 @@
     <!-- ═══════════════════════════════════════════════════════════════════ -->
     <!-- Run Ops Modal -->
     <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- ═══════════════════════════════════════════════════════════════════
+         Drive Backup / Restore Modal
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div id="driveBackupModal" class="pm-modal-overlay" style="display:none;">
+        <div class="pm-modal" style="max-width:780px;max-height:90vh;display:flex;flex-direction:column;">
+            <div class="pm-modal-header">
+                <h3><i class="fab fa-google-drive" style="color:#4285f4;margin-right:8px;"></i>Profile Backup &mdash; Google Drive</h3>
+                <button class="pm-modal-close" id="driveBackupModalClose">&times;</button>
+            </div>
+
+            <div style="padding:14px 18px;flex:1;overflow-y:auto;">
+                <!-- Status row -->
+                <div id="driveBackupStatus" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.25);border-radius:6px;padding:10px 12px;font-size:12px;color:#cbd5e1;margin-bottom:12px;">
+                    <i class="fas fa-spinner fa-spin"></i> Checking Drive connection&hellip;
+                </div>
+
+                <!-- Action buttons -->
+                <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+                    <button class="btn btn-primary btn-sm" id="driveBackupNowBtn">
+                        <i class="fas fa-cloud-upload-alt"></i> Backup Now
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="driveBackupRefreshBtn">
+                        <i class="fas fa-sync"></i> Refresh List
+                    </button>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#94a3b8;margin-left:auto;cursor:pointer;">
+                        <input type="checkbox" id="driveAutoBackupToggle">
+                        <span>Auto-backup every</span>
+                        <input type="number" id="driveAutoBackupInterval" value="24" min="1" max="168" style="width:50px;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:4px;padding:2px 4px;color:#e2e8f0;font-size:12px;">
+                        <span>h</span>
+                    </label>
+                </div>
+
+                <!-- Backup list -->
+                <div style="font-size:12px;font-weight:600;color:#a5b4fc;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">
+                    Available Backups
+                </div>
+                <div id="driveBackupList" style="background:#0f1629;border:1px solid var(--border);border-radius:6px;max-height:380px;overflow-y:auto;">
+                    <div style="padding:24px;text-align:center;color:#64748b;font-size:12px;">
+                        <i class="fas fa-spinner fa-spin"></i> Loading&hellip;
+                    </div>
+                </div>
+            </div>
+
+            <div class="pm-modal-footer">
+                <button class="btn btn-secondary" id="driveBackupModalCancelBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="runOpsModal" class="pm-modal-overlay" style="display:none;">
         <div class="pm-modal" style="max-width:1050px;max-height:90vh;display:flex;flex-direction:column;">
             <!-- Header -->

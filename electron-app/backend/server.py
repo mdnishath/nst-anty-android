@@ -2402,6 +2402,52 @@ def profiles_cleanup():
     return jsonify({'success': True, **result})
 
 
+# ── Profile Drive Backup / Restore ───────────────────────────────────────────
+from shared import drive_backup as _drive_backup
+try:
+    _drive_backup.start_auto_backup_loop(RESOURCES_PATH)
+except Exception:
+    pass
+
+
+@app.route('/api/profiles/drive/status', methods=['GET'])
+def profiles_drive_status():
+    return jsonify(_drive_backup.status(RESOURCES_PATH))
+
+
+@app.route('/api/profiles/drive/backup', methods=['POST'])
+def profiles_drive_backup():
+    return jsonify(_drive_backup.backup_now(RESOURCES_PATH))
+
+
+@app.route('/api/profiles/drive/backups', methods=['GET'])
+def profiles_drive_backups():
+    return jsonify(_drive_backup.list_backups(RESOURCES_PATH))
+
+
+@app.route('/api/profiles/drive/restore', methods=['POST'])
+def profiles_drive_restore():
+    body = request.get_json(silent=True) or {}
+    file_id = (body.get('file_id') or '').strip()
+    if not file_id:
+        return jsonify({'success': False, 'message': 'file_id is required'}), 400
+    return jsonify(_drive_backup.restore(RESOURCES_PATH, file_id))
+
+
+@app.route('/api/profiles/drive/auto-backup', methods=['POST'])
+def profiles_drive_auto_backup():
+    body = request.get_json(silent=True) or {}
+    enabled = bool(body.get('enabled', False))
+    interval = int(body.get('interval_hours') or 24)
+    res = _drive_backup.set_auto_backup(RESOURCES_PATH, enabled, interval)
+    if enabled:
+        try:
+            _drive_backup.start_auto_backup_loop(RESOURCES_PATH)
+        except Exception:
+            pass
+    return jsonify(res)
+
+
 @app.route('/api/profiles/restore-from-nst', methods=['POST'])
 def profiles_restore_from_nst():
     """Recover profiles missing from local profiles.json by pulling them from NST.

@@ -79,6 +79,13 @@ a = Analysis(
         # ── Utilities ────────────────────────────────────────────────────────
         'loguru', 'colorama', 'dotenv',
 
+        # ── Google Drive backup ──────────────────────────────────────────────
+        'shared.drive_backup',
+        'google', 'google.auth', 'google.auth.transport.requests',
+        'google.oauth2', 'google.oauth2.credentials',
+        'googleapiclient', 'googleapiclient.discovery',
+        'googleapiclient.http', 'googleapiclient._auth',
+
         # ── Bot entry scripts (dynamically imported in main_entry.py) ────────
         'gmail_bot_step1', 'gmail_bot_step2', 'gmail_bot_step3', 'gmail_bot_step4',
         'gmail_bot_linked',
