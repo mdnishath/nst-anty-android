@@ -1,19 +1,31 @@
 """
-shared/license_manager.py — License key validation + activation.
+shared/license_manager.py — Offline-validated license keys.
 
-License model:
-- license.json stored in the project's `config/` folder.
-- Required fields: license_key, machine_id, activation_date, expiry_date,
-                   license_id, tier, integrity_hash.
-- integrity_hash = HMAC-SHA256(secret, "{key}|{machine_id}|{expiry_date}|{tier}").
-- Machine binding: machine_id must match the current machine's hardware fingerprint.
-- Expiry: if expiry_date < today, license is invalid.
+Ported from MailNexus Pro `licensing.py`. Key format:
 
-Activation flow (online, optional license server):
-  POST {LICENSE_SERVER}/activate {license_key, machine_id} → returns full license dict.
+    MNX-XXXXX-XXXXX-XXXXX-XXXXX
 
-Activation flow (offline / dev mint):
-  Use shared/license_keygen.py to generate license.json directly.
+The key itself encodes (version, license_id, days_valid, creation_date)
+plus an HMAC-SHA256 tag — so the app can validate offline without a
+server. Machine binding is OPTIONAL: by default any machine that knows a
+valid key can activate (this lets one license cover, say, the user's
+main PC + a friend's PC). To enforce strict per-machine binding, set
+`STRICT_MACHINE_BIND = True`.
+
+Public API:
+    init(resources_path)
+    is_licensed() -> bool
+    get_license_info() -> dict
+    activate(key_str) -> dict
+    deactivate() -> dict
+    get_machine_id() -> str
+
+The activation flow:
+    1. User types the key.
+    2. parse_license_key() verifies HMAC and decodes fields.
+    3. We write license.json with machine_id (informational) and expiry.
+    4. validate_license() re-checks key + integrity_hash + expiry on
+       every is_licensed() call.
 """
 
 from __future__ import annotations
@@ -24,259 +36,445 @@ import json
 import os
 import platform
 import subprocess
-import uuid
-from datetime import datetime, date
+import threading
+import time
+import urllib.request
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Constants — MUST match tools/license_keygen.py
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Shared secret for HMAC. CHANGE this and recompile to rotate the keying scheme.
-# Anything that knows this secret can mint valid licenses, so don't leak it.
-_SECRET = b'NST-ANTY-ANDROID-2026-LICENSE-V1'
+ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"      # Base31 — no 0/O/1/I/L
+BASE = len(ALPHABET)
+KEY_PREFIX = "MNX"
 
-# Optional remote activation endpoint. Empty = offline-only.
-_LICENSE_SERVER = os.environ.get('LICENSE_SERVER', '').rstrip('/')
+# Shared HMAC secret. Anything that knows this value can mint a valid key,
+# so it must never leak into the renderer / any client-shipped JS.
+SECRET_KEY = b'f7a3d91c4e6b8205fa9c1d3e7b4a6082c5f8e1d9b3a7604c2e8f5d1a9b3c7e40'
 
-# Where the license file lives (set via init()).
-_license_path: Path | None = None
-_cached: dict | None = None
+# Day numbering anchor — creation_day in the key is days since this date
+EPOCH = date(2025, 1, 1)
 
+# Tier mapping — encoded in the 4-bit `version` field of the key
+TIER_MAP = {1: 'pro', 2: 'basic'}
 
-# ── Init ──────────────────────────────────────────────────────────────────────
+# Online blacklist (GitHub Gist) — empty disables the check
+BLACKLIST_URL = os.environ.get(
+    'LICENSE_BLACKLIST_URL',
+    'https://gist.githubusercontent.com/mdnishath/4781b52137098ddced727568fa31be7a/raw/revoked_licenses.json',
+)
+BLACKLIST_TIMEOUT = 2
+BLACKLIST_REFRESH = 300
+_blacklist_cache = {'last_check': 0, 'revoked': set()}
+
+# When False (default): any machine with a valid key activates — same key
+# works on multiple machines. When True: license.json is locked to the
+# machine_id captured at activation time.
+STRICT_MACHINE_BIND = False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module state
+# ─────────────────────────────────────────────────────────────────────────────
+
+_resources_path: Path | None = None
+
 
 def init(resources_path: str | Path):
-    """Call once at server startup. Resolves license.json location."""
-    global _license_path
-    _license_path = Path(resources_path) / 'config' / 'license.json'
-    _license_path.parent.mkdir(parents=True, exist_ok=True)
+    """Set the project root that holds config/license.json."""
+    global _resources_path
+    _resources_path = Path(resources_path)
+    (_resources_path / 'config').mkdir(parents=True, exist_ok=True)
 
 
 def _path() -> Path:
-    if _license_path is None:
-        # Fallback — assume project root + config/
-        return Path.cwd() / 'config' / 'license.json'
-    return _license_path
+    base = _resources_path or Path.cwd()
+    return base / 'config' / 'license.json'
 
 
-# ── Machine ID ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Base31 encoding helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _bytes_to_int(data: bytes) -> int:
+    n = 0
+    for b in data:
+        n = (n << 8) | b
+    return n
+
+
+def _int_to_bytes(n: int, length: int) -> bytes:
+    out = []
+    for _ in range(length):
+        out.append(n & 0xFF)
+        n >>= 8
+    return bytes(reversed(out))
+
+
+def _base31_encode(data: bytes, length: int = 20) -> str:
+    n = _bytes_to_int(data)
+    chars = []
+    for _ in range(length):
+        chars.append(ALPHABET[n % BASE])
+        n //= BASE
+    return ''.join(reversed(chars))
+
+
+def _base31_decode(s: str) -> int:
+    n = 0
+    for ch in s:
+        idx = ALPHABET.find(ch)
+        if idx < 0:
+            raise ValueError(f"Invalid character: {ch!r}")
+        n = n * BASE + idx
+    return n
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Key encode / decode
+# ─────────────────────────────────────────────────────────────────────────────
+
+def format_license_key(version: int, license_id: int, days_valid: int,
+                       creation_date: date) -> str:
+    creation_day = (creation_date - EPOCH).days
+    if creation_day < 0:
+        raise ValueError("Creation date before epoch (2025-01-01)")
+    payload_int = (
+        ((version & 0xF) << 44) |
+        ((license_id & 0xFFFF) << 28) |
+        ((days_valid & 0xFFF) << 16) |
+        (creation_day & 0xFFFF)
+    )
+    payload = _int_to_bytes(payload_int, 6)
+    tag = hmac.new(SECRET_KEY, payload, hashlib.sha256).digest()[:6]
+    chars = _base31_encode(payload + tag, 20)
+    return f"{KEY_PREFIX}-{chars[0:5]}-{chars[5:10]}-{chars[10:15]}-{chars[15:20]}"
+
+
+def parse_license_key(key_str: str) -> dict | None:
+    """Decode + HMAC-verify a license key. Returns dict on success, None on failure."""
+    s = (key_str or '').strip().upper()
+    if s.startswith(KEY_PREFIX + '-'):
+        s = s[len(KEY_PREFIX) + 1:]
+    chars = s.replace('-', '')
+    if len(chars) != 20 or any(c not in ALPHABET for c in chars):
+        return None
+    try:
+        raw = _int_to_bytes(_base31_decode(chars), 12)
+    except ValueError:
+        return None
+    payload, tag = raw[:6], raw[6:]
+    expected = hmac.new(SECRET_KEY, payload, hashlib.sha256).digest()[:6]
+    if not hmac.compare_digest(tag, expected):
+        return None
+    pi = _bytes_to_int(payload)
+    version = (pi >> 44) & 0xF
+    license_id = (pi >> 28) & 0xFFFF
+    days_valid = (pi >> 16) & 0xFFF
+    creation_day = pi & 0xFFFF
+    return {
+        'version': version,
+        'license_id': license_id,
+        'days_valid': days_valid,
+        'creation_day': creation_day,
+        'creation_date': (EPOCH + timedelta(days=creation_day)).isoformat(),
+        'tier': TIER_MAP.get(version, 'basic'),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Machine fingerprint (informational only when STRICT_MACHINE_BIND=False)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def get_machine_id() -> str:
-    """Stable per-machine fingerprint. MD5 of OS-specific identifiers."""
+    """Deterministic 32-char hex fingerprint from hardware identifiers."""
     parts = []
-    try:
-        if platform.system() == 'Windows':
-            # Windows: use the MachineGuid from registry
-            r = subprocess.run(
-                ['reg', 'query', r'HKLM\SOFTWARE\Microsoft\Cryptography', '/v', 'MachineGuid'],
-                capture_output=True, text=True, timeout=5,
-            )
-            for line in r.stdout.splitlines():
-                if 'MachineGuid' in line:
-                    parts.append(line.split()[-1])
+    if platform.system() == 'Windows':
+        for cmd, label in [
+            ('wmic baseboard get serialnumber', 'BOARD'),
+            ('wmic cpu get processorid', 'CPU'),
+            ('wmic bios get serialnumber', 'BIOS'),
+            ('wmic diskdrive where Index=0 get SerialNumber', 'DISK'),
+        ]:
+            try:
+                out = subprocess.check_output(
+                    cmd, shell=True, timeout=10, stderr=subprocess.DEVNULL
+                ).decode('utf-8', errors='ignore').strip().split('\n')
+                val = out[-1].strip() if len(out) > 1 else ''
+                if val and val.lower() not in ('', 'to be filled by o.e.m.',
+                                               'default string', 'none'):
+                    parts.append(f"{label}:{val}")
+            except Exception:
+                pass
+    elif platform.system() == 'Linux':
+        for p in ('/etc/machine-id', '/var/lib/dbus/machine-id'):
+            if Path(p).exists():
+                try:
+                    parts.append('LMID:' + Path(p).read_text().strip())
                     break
-        elif platform.system() == 'Linux':
-            for p in ('/etc/machine-id', '/var/lib/dbus/machine-id'):
-                if Path(p).exists():
-                    parts.append(Path(p).read_text().strip())
-                    break
-        elif platform.system() == 'Darwin':
+                except Exception:
+                    pass
+    elif platform.system() == 'Darwin':
+        try:
             r = subprocess.run(
                 ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
                 capture_output=True, text=True, timeout=5,
             )
             for line in r.stdout.splitlines():
                 if 'IOPlatformUUID' in line:
-                    parts.append(line.split('"')[-2])
+                    parts.append('MUUID:' + line.split('"')[-2])
                     break
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     if not parts:
-        # Last-resort fallback — MAC address based
-        parts.append(hex(uuid.getnode()))
+        parts.append(f"HOST:{platform.node()}|USER:{os.getenv('USERNAME', os.getenv('USER', 'unknown'))}")
 
-    parts.append(platform.system())
-    parts.append(platform.machine())
-    raw = '|'.join(parts).encode()
-    return hashlib.md5(raw).hexdigest()
+    parts.sort()
+    raw = '|'.join(parts).encode('utf-8')
+    return hashlib.sha256(raw).hexdigest()[:32]
 
 
-# ── HMAC integrity ────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Online blacklist
+# ─────────────────────────────────────────────────────────────────────────────
 
-def _expected_hash(lic: dict) -> str:
-    """Compute the HMAC integrity hash for a license payload."""
-    key = lic.get('license_key', '')
-    mid = lic.get('machine_id', '')
-    exp = lic.get('expiry_date', '')
-    tier = lic.get('tier', 'pro')
-    msg = f'{key}|{mid}|{exp}|{tier}'.encode()
-    return hmac.new(_SECRET, msg, hashlib.sha256).hexdigest()
-
-
-def _validate_payload(lic: dict, machine_id: str) -> tuple[bool, str]:
-    """Return (valid, reason)."""
-    required = ('license_key', 'machine_id', 'expiry_date', 'tier', 'integrity_hash')
-    missing = [f for f in required if not lic.get(f)]
-    if missing:
-        return False, f'License file missing fields: {missing}'
-
-    if lic['machine_id'] != machine_id:
-        return False, 'License is bound to a different machine'
-
-    # Expiry check (skip if "lifetime")
-    exp = lic['expiry_date']
-    if exp not in ('lifetime', 'never', '9999-12-31'):
-        try:
-            exp_d = datetime.strptime(exp, '%Y-%m-%d').date()
-            if exp_d < date.today():
-                return False, f'License expired on {exp}'
-        except ValueError:
-            return False, f'Invalid expiry_date format: {exp}'
-
-    # Integrity hash check
-    if lic['integrity_hash'] != _expected_hash(lic):
-        return False, 'License integrity hash mismatch — file may have been tampered with'
-
-    return True, 'OK'
+def _fetch_blacklist() -> set:
+    if not BLACKLIST_URL:
+        return set()
+    now = time.time()
+    if now - _blacklist_cache['last_check'] < BLACKLIST_REFRESH:
+        return _blacklist_cache['revoked']
+    _blacklist_cache['last_check'] = now
+    try:
+        req = urllib.request.Request(BLACKLIST_URL, headers={
+            'User-Agent': 'NST-Anty/1.0',
+            'Cache-Control': 'no-cache',
+        })
+        with urllib.request.urlopen(req, timeout=BLACKLIST_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            revoked = set(int(x) for x in data.get('revoked', []))
+            _blacklist_cache['revoked'] = revoked
+            return revoked
+    except Exception:
+        return _blacklist_cache['revoked']
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+def is_license_revoked(license_id: int) -> bool:
+    return license_id in _fetch_blacklist()
+
+
+def warm_blacklist_async():
+    if BLACKLIST_URL:
+        threading.Thread(target=_fetch_blacklist, daemon=True).start()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# license.json I/O
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _compute_integrity_hash(data: dict) -> str:
+    payload = (
+        data.get('license_key', '')
+        + data.get('machine_id', '')
+        + (data.get('activation_date') or '')
+        + (data.get('expiry_date') or '')
+        + str(data.get('license_id', ''))
+        + SECRET_KEY.decode('utf-8')
+    )
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _load() -> dict | None:
+    p = _path()
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text('utf-8'))
+    except Exception:
+        return None
+
+
+def _save(data: dict):
+    data['integrity_hash'] = _compute_integrity_hash(data)
+    p = _path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), 'utf-8')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public API
+# ─────────────────────────────────────────────────────────────────────────────
 
 def is_licensed() -> bool:
-    """True if a valid license is currently activated on this machine."""
-    info = get_license_info()
-    return bool(info.get('valid'))
+    return bool(get_license_info().get('valid'))
 
 
 def get_license_info() -> dict:
-    """Return current license status. Always returns a dict (never raises)."""
-    global _cached
+    """Status of the local license. Always returns a dict."""
+    lic = _load()
+    machine_id = get_machine_id()
 
-    p = _path()
-    if not p.exists():
+    if lic is None:
         return {
             'valid': False,
             'reason': 'No license file. Please activate.',
-            'machine_id': get_machine_id(),
-            'license_key': None,
+            'license_key': None, 'license_id': None, 'tier': None,
+            'machine_id': machine_id,
+            'activation_date': None, 'expiry_date': None,
+            'days_remaining': None,
         }
 
-    try:
-        lic = json.loads(p.read_text('utf-8'))
-    except Exception as e:
+    # Integrity check
+    if lic.get('integrity_hash') != _compute_integrity_hash(lic):
         return {
-            'valid': False,
-            'reason': f'License file unreadable: {e}',
-            'machine_id': get_machine_id(),
-            'license_key': None,
+            'valid': False, 'reason': 'License file tampered with',
+            'license_key': lic.get('license_key'),
+            'license_id': lic.get('license_id'),
+            'tier': lic.get('tier'),
+            'machine_id': machine_id,
+            'activation_date': lic.get('activation_date'),
+            'expiry_date': lic.get('expiry_date'),
+            'days_remaining': None,
         }
 
-    machine_id = get_machine_id()
-    valid, reason = _validate_payload(lic, machine_id)
+    # Re-verify key HMAC
+    kd = parse_license_key(lic.get('license_key', ''))
+    if kd is None:
+        return {
+            'valid': False, 'reason': 'License key signature invalid',
+            'license_key': lic.get('license_key'),
+            'license_id': lic.get('license_id'),
+            'tier': lic.get('tier'),
+            'machine_id': machine_id,
+            'activation_date': lic.get('activation_date'),
+            'expiry_date': lic.get('expiry_date'),
+            'days_remaining': None,
+        }
 
-    # Compute days remaining
-    days_remaining = None
-    exp = lic.get('expiry_date', '')
-    if exp in ('lifetime', 'never', '9999-12-31'):
-        days_remaining = -1   # unlimited
-    else:
+    # Machine binding (only if strict)
+    if STRICT_MACHINE_BIND and lic.get('machine_id') != machine_id:
+        return {
+            'valid': False, 'reason': 'License is bound to a different machine',
+            'license_key': lic.get('license_key'),
+            'license_id': kd['license_id'],
+            'tier': kd['tier'],
+            'machine_id': machine_id,
+            'activation_date': lic.get('activation_date'),
+            'expiry_date': lic.get('expiry_date'),
+            'days_remaining': None,
+        }
+
+    # Blacklist
+    if is_license_revoked(kd['license_id']):
+        return {
+            'valid': False, 'reason': 'License has been revoked',
+            'license_key': lic.get('license_key'),
+            'license_id': kd['license_id'],
+            'tier': kd['tier'],
+            'machine_id': machine_id,
+            'activation_date': lic.get('activation_date'),
+            'expiry_date': lic.get('expiry_date'),
+            'days_remaining': 0,
+        }
+
+    # Expiry
+    days_remaining = -1   # lifetime if days_valid == 0
+    if kd['days_valid'] > 0:
+        exp_str = lic.get('expiry_date')
         try:
-            exp_d = datetime.strptime(exp, '%Y-%m-%d').date()
-            days_remaining = (exp_d - date.today()).days
-        except ValueError:
-            pass
+            exp = date.fromisoformat(exp_str) if exp_str else None
+        except Exception:
+            exp = None
+        if exp is None:
+            return {
+                'valid': False, 'reason': 'Invalid expiry date',
+                'license_key': lic.get('license_key'),
+                'license_id': kd['license_id'],
+                'tier': kd['tier'],
+                'machine_id': machine_id,
+                'activation_date': lic.get('activation_date'),
+                'expiry_date': exp_str,
+                'days_remaining': None,
+            }
+        days_remaining = (exp - date.today()).days
+        if days_remaining < 0:
+            return {
+                'valid': False, 'reason': f'License expired on {exp_str}',
+                'license_key': lic.get('license_key'),
+                'license_id': kd['license_id'],
+                'tier': kd['tier'],
+                'machine_id': machine_id,
+                'activation_date': lic.get('activation_date'),
+                'expiry_date': exp_str,
+                'days_remaining': 0,
+            }
 
-    info = {
-        'valid': valid,
-        'reason': reason,
+    return {
+        'valid': True, 'reason': 'OK',
         'license_key': lic.get('license_key'),
-        'license_id': lic.get('license_id'),
-        'tier': lic.get('tier', 'pro'),
+        'license_id': kd['license_id'],
+        'tier': kd['tier'],
         'machine_id': machine_id,
         'activation_date': lic.get('activation_date'),
         'expiry_date': lic.get('expiry_date'),
         'days_remaining': days_remaining,
     }
 
-    if valid:
-        _cached = lic
 
-    return info
+def activate(key_str: str) -> dict:
+    """Validate a license key and write license.json. Same key works on any machine."""
+    kd = parse_license_key(key_str)
+    if kd is None:
+        return {'success': False, 'message': 'Invalid license key'}
 
+    today = date.today()
+    creation = date.fromisoformat(kd['creation_date'])
+    days_valid = kd['days_valid']
 
-def activate(license_key: str) -> dict:
-    """Activate a license key on this machine.
+    # Reject keys that were issued so long ago that they would be born expired
+    if days_valid > 0:
+        absolute_expiry = creation + timedelta(days=days_valid)
+        if today > absolute_expiry:
+            return {'success': False,
+                    'message': 'This key expired before being activated. Get a fresh one.'}
 
-    Two paths:
-    1. If LICENSE_SERVER env var is set → call remote activation endpoint.
-    2. Otherwise → require an offline-minted license.json to already exist
-       and only update its machine_id binding (works for in-place re-binding).
-    """
-    license_key = (license_key or '').strip().upper()
-    if not license_key:
-        return {'success': False, 'message': 'License key is empty'}
+    if is_license_revoked(kd['license_id']):
+        return {'success': False, 'message': 'This license has been revoked'}
 
-    machine_id = get_machine_id()
+    if days_valid > 0:
+        expiry_date = (today + timedelta(days=days_valid)).isoformat()
+        days_remaining = days_valid
+    else:
+        expiry_date = None        # lifetime
+        days_remaining = -1
 
-    # ── Path 1: Online activation ─────────────────────────────────────────
-    if _LICENSE_SERVER:
-        try:
-            import requests
-            r = requests.post(
-                f'{_LICENSE_SERVER}/activate',
-                json={'license_key': license_key, 'machine_id': machine_id},
-                timeout=15,
-            )
-            if r.status_code != 200:
-                return {'success': False,
-                        'message': f'Server rejected: {r.status_code} {r.text[:200]}'}
-            data = r.json()
-            if not data.get('success'):
-                return {'success': False, 'message': data.get('message', 'Activation failed')}
-            payload = data.get('license') or {}
-        except Exception as e:
-            return {'success': False, 'message': f'Could not reach license server: {e}'}
+    # Normalize key formatting
+    s = key_str.strip().upper()
+    if not s.startswith(KEY_PREFIX + '-'):
+        chars = s.replace('-', '')
+        s = f"{KEY_PREFIX}-{chars[0:5]}-{chars[5:10]}-{chars[10:15]}-{chars[15:20]}"
 
-        # Re-sign with our HMAC (server may use its own scheme — we re-issue locally)
-        payload['license_key'] = license_key
-        payload['machine_id'] = machine_id
-        payload.setdefault('tier', 'pro')
-        payload.setdefault('activation_date', date.today().isoformat())
-        payload.setdefault('expiry_date', '9999-12-31')
-        payload.setdefault('version', 1)
-        payload['integrity_hash'] = _expected_hash(payload)
-
-        _path().write_text(json.dumps(payload, indent=2), 'utf-8')
-        return {'success': True, 'license': payload}
-
-    # ── Path 2: Offline — accept pre-existing license.json with matching key ──
-    p = _path()
-    if not p.exists():
-        return {'success': False,
-                'message': 'No license file present and no LICENSE_SERVER configured. '
-                           'Provide a license.json minted by license_keygen.py.'}
-
-    try:
-        lic = json.loads(p.read_text('utf-8'))
-    except Exception as e:
-        return {'success': False, 'message': f'Existing license file unreadable: {e}'}
-
-    if lic.get('license_key', '').upper() != license_key:
-        return {'success': False,
-                'message': 'License key does not match the file on disk. Contact support.'}
-
-    # Re-bind to current machine + re-sign
-    lic['machine_id'] = machine_id
-    lic.setdefault('activation_date', date.today().isoformat())
-    lic.setdefault('tier', 'pro')
-    lic['integrity_hash'] = _expected_hash(lic)
-
-    p.write_text(json.dumps(lic, indent=2), 'utf-8')
-    return {'success': True, 'license': lic}
+    payload = {
+        'license_key': s,
+        'machine_id': get_machine_id(),
+        'activation_date': today.isoformat(),
+        'expiry_date': expiry_date,
+        'license_id': kd['license_id'],
+        'version': kd['version'],
+        'tier': kd['tier'],
+    }
+    _save(payload)
+    return {
+        'success': True,
+        'license': payload,
+        'days_remaining': days_remaining,
+        'tier': kd['tier'],
+    }
 
 
 def deactivate() -> dict:
-    """Remove the local license file."""
     p = _path()
     if p.exists():
         try:
@@ -287,33 +485,11 @@ def deactivate() -> dict:
 
 
 def reseal_existing() -> bool:
-    """One-time helper: re-sign a pre-existing license.json with our HMAC scheme.
-
-    Useful when migrating from a prior key-derivation scheme — accepts the file
-    as-is (machine-id and expiry must be valid) and replaces integrity_hash so
-    is_licensed() will start returning True.
-
-    Only call this BEHIND a manual switch / migration — not in the hot path.
-    """
-    p = _path()
-    if not p.exists():
+    """Re-write integrity_hash on the existing license.json (after secret rotation)."""
+    lic = _load()
+    if lic is None:
         return False
-    try:
-        lic = json.loads(p.read_text('utf-8'))
-    except Exception:
+    if parse_license_key(lic.get('license_key', '')) is None:
         return False
-
-    # Basic sanity — must have key + machine_id matching THIS machine + future expiry
-    if lic.get('machine_id') != get_machine_id():
-        return False
-    exp = lic.get('expiry_date', '')
-    if exp not in ('lifetime', 'never', '9999-12-31'):
-        try:
-            if datetime.strptime(exp, '%Y-%m-%d').date() < date.today():
-                return False
-        except ValueError:
-            return False
-
-    lic['integrity_hash'] = _expected_hash(lic)
-    p.write_text(json.dumps(lic, indent=2), 'utf-8')
+    _save(lic)
     return True

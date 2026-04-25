@@ -1,99 +1,93 @@
 """
-License key generator (dev-only, do not ship with the app).
+License key generator (dev-only).
+
+Generates self-validating MNX-XXXXX-XXXXX-XXXXX-XXXXX keys. The user just
+types the key in the app — no machine_id needs to be collected, and the
+same key works on any machine (since STRICT_MACHINE_BIND is False).
 
 Usage:
-    python tools/license_keygen.py mint --machine-id <MID> [--days 365] [--tier pro]
-    python tools/license_keygen.py mint-current [--days 365]   # use this machine's id
-    python tools/license_keygen.py reseal                       # re-sign existing config/license.json
-
-The output is a license.json payload. Copy it into the user's
-config/license.json on the target machine — they then just need to enter
-the license_key in the app to "activate" (which re-signs against their machine).
+    python tools/license_keygen.py --days 30
+    python tools/license_keygen.py --days 365 --batch 10
+    python tools/license_keygen.py --days 0           # lifetime
+    python tools/license_keygen.py --days 90 --tier basic
+    python tools/license_keygen.py --days 0 --id 100
 """
 
 import argparse
-import json
-import secrets
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
 
-# Make `shared.license_manager` importable when run from project root
+# Make `shared.license_manager` importable from project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from shared import license_manager   # noqa: E402
 
+COUNTER_FILE = Path(__file__).parent / 'license_counter.txt'
 
-def _gen_key() -> str:
-    """Generate a license key like MNX-XXXXX-XXXXX-XXXXX-XXXXX."""
-    alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'   # no 0/1/I/O for readability
-    blocks = ['MNX']
-    for _ in range(4):
-        blocks.append(''.join(secrets.choice(alphabet) for _ in range(5)))
-    return '-'.join(blocks)
+TIER_VERSION = {'pro': 1, 'basic': 2}
 
 
-def mint(machine_id: str, days: int, tier: str, license_id: int) -> dict:
-    today = date.today()
-    if days >= 36500:   # 100+ years = lifetime
-        expiry = '9999-12-31'
-    else:
-        expiry = (today + timedelta(days=days)).isoformat()
+def _read_counter() -> int:
+    if COUNTER_FILE.exists():
+        try:
+            return int(COUNTER_FILE.read_text().strip())
+        except (ValueError, OSError):
+            pass
+    return 0
 
-    lic = {
-        'license_key': _gen_key(),
-        'machine_id': machine_id,
-        'activation_date': today.isoformat(),
-        'expiry_date': expiry,
-        'license_id': license_id,
-        'version': 1,
-        'tier': tier,
-    }
-    lic['integrity_hash'] = license_manager._expected_hash(lic)
-    return lic
+
+def _write_counter(val: int):
+    COUNTER_FILE.write_text(str(val))
+
+
+def _next_id() -> int:
+    n = _read_counter() + 1
+    _write_counter(n)
+    return n
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    sub = ap.add_subparsers(dest='cmd', required=True)
+    p = argparse.ArgumentParser(
+        description='NST Anty Android — License Key Generator',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            'Examples:\n'
+            '  python tools/license_keygen.py --days 30\n'
+            '  python tools/license_keygen.py --days 90 --batch 5\n'
+            '  python tools/license_keygen.py --days 0           # lifetime\n'
+            '  python tools/license_keygen.py --days 365 --tier basic\n'
+        ),
+    )
+    p.add_argument('--days', type=int, required=True,
+                   help='Validity in days from activation (0 = lifetime, max 4095)')
+    p.add_argument('--id', type=int, default=None,
+                   help='License ID (auto-incremented if omitted)')
+    p.add_argument('--batch', type=int, default=1, help='How many keys to mint')
+    p.add_argument('--tier', default='pro', choices=['basic', 'pro'])
+    args = p.parse_args()
 
-    a = sub.add_parser('mint', help='Mint a license for a specific machine_id')
-    a.add_argument('--machine-id', required=True)
-    a.add_argument('--days', type=int, default=365)
-    a.add_argument('--tier', default='pro', choices=['basic', 'pro', 'lifetime'])
-    a.add_argument('--license-id', type=int, default=secrets.randbelow(10000) + 1)
-    a.add_argument('--out', help='Write to this path instead of printing')
+    if args.days < 0 or args.days > 4095:
+        sys.exit('Error: --days must be 0..4095')
 
-    b = sub.add_parser('mint-current',
-                       help='Mint a license bound to the current machine')
-    b.add_argument('--days', type=int, default=365)
-    b.add_argument('--tier', default='pro', choices=['basic', 'pro', 'lifetime'])
-    b.add_argument('--license-id', type=int, default=secrets.randbelow(10000) + 1)
-    b.add_argument('--out', help='Write to this path instead of printing')
+    version = TIER_VERSION[args.tier]
+    today = date.today()
 
-    sub.add_parser('reseal',
-                   help='Re-sign existing config/license.json (after secret rotation)')
+    print('=' * 64)
+    print(f'  NST Anty Android — License Generator')
+    print(f'  Date     : {today.isoformat()}')
+    print(f'  Validity : {args.days} days' if args.days > 0 else '  Validity : Lifetime')
+    print(f'  Tier     : {args.tier.upper()}')
+    print('=' * 64)
 
-    args = ap.parse_args()
+    for i in range(args.batch):
+        lid = (args.id + i) if args.id is not None else _next_id()
+        key = license_manager.format_license_key(version, lid, args.days, today)
+        days_label = f'{args.days:>4d} days' if args.days > 0 else 'Lifetime'
+        print(f'  #{lid:>5d} | {days_label} | {args.tier.upper():>5s} | {key}')
 
-    if args.cmd in ('mint', 'mint-current'):
-        if args.cmd == 'mint':
-            mid = args.machine_id
-        else:
-            mid = license_manager.get_machine_id()
-            print(f'Current machine_id: {mid}')
-
-        lic = mint(mid, args.days, args.tier, args.license_id)
-        text = json.dumps(lic, indent=2)
-        if args.out:
-            Path(args.out).write_text(text, 'utf-8')
-            print(f'Wrote {args.out}')
-        else:
-            print(text)
-
-    elif args.cmd == 'reseal':
-        license_manager.init(Path(__file__).parent.parent)
-        ok = license_manager.reseal_existing()
-        print('Resealed.' if ok else 'Reseal failed (file missing, expired, or wrong machine).')
+    print('=' * 64)
+    print(f'  Generated {args.batch} key(s)')
+    print('=' * 64)
 
 
 if __name__ == '__main__':
