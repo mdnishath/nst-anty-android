@@ -896,6 +896,9 @@
                 <button class="tools-tab" data-tools-tab="totp">
                     <i class="fas fa-shield-alt"></i> TOTP
                 </button>
+                <button class="tools-tab" data-tools-tab="license">
+                    <i class="fas fa-id-card"></i> License
+                </button>
             </div>
 
             <!-- Screenshots Tab -->
@@ -1004,6 +1007,76 @@
                         <div id="toolsTotpTimerBar" style="height:100%; background:var(--primary); border-radius:2px; transition:width 1s linear; width:0%;"></div>
                     </div>
                     <p style="color:#94a3b8; font-size:11px; margin-top:8px; text-align:center;">Code refreshes every 30 seconds</p>
+                </div>
+            </div>
+
+            <!-- License Tab -->
+            <div class="tools-tab-content" id="toolsTabLicense" data-tools-tab-content="license">
+                <div class="card glass" style="max-width:640px;">
+                    <h3 style="margin-bottom:8px;"><i class="fas fa-id-card"></i> License</h3>
+                    <p style="color:var(--text-secondary); font-size:13px; margin-bottom:18px;">
+                        View, change, or deactivate your license. Same key works on multiple machines.
+                    </p>
+
+                    <div id="licInfoLoading" style="color:#94a3b8;font-size:13px;margin-bottom:12px;">
+                        <i class="fas fa-spinner fa-spin"></i> Loading license info…
+                    </div>
+
+                    <div id="licInfoPanel" style="display:none;">
+                        <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 14px;font-size:13px;margin-bottom:18px;">
+                            <span style="color:#64748b;">Status</span>
+                            <span id="licInfoStatus">—</span>
+
+                            <span style="color:#64748b;">License Key</span>
+                            <span id="licInfoKey" style="font-family:monospace;color:#a5b4fc;">—</span>
+
+                            <span style="color:#64748b;">Tier</span>
+                            <span id="licInfoTier">—</span>
+
+                            <span style="color:#64748b;">License ID</span>
+                            <span id="licInfoId">—</span>
+
+                            <span style="color:#64748b;">Activation Date</span>
+                            <span id="licInfoActivation">—</span>
+
+                            <span style="color:#64748b;">Expiry Date</span>
+                            <span id="licInfoExpiry">—</span>
+
+                            <span style="color:#64748b;">Days Remaining</span>
+                            <span id="licInfoDays">—</span>
+
+                            <span style="color:#64748b;">Machine ID</span>
+                            <span id="licInfoMachine" style="font-family:monospace;color:#94a3b8;font-size:11px;">—</span>
+                        </div>
+
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                            <button class="btn btn-secondary btn-sm" id="licRefreshBtn">
+                                <i class="fas fa-sync"></i> Refresh
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="licChangeBtn">
+                                <i class="fas fa-key"></i> Change Key
+                            </button>
+                            <button class="btn btn-danger btn-sm" id="licDeactivateBtn">
+                                <i class="fas fa-times-circle"></i> Deactivate
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Change-key inline form -->
+                    <div id="licChangeForm" style="display:none;border-top:1px solid var(--border);margin-top:14px;padding-top:14px;">
+                        <label style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px;">
+                            New License Key
+                        </label>
+                        <input type="text" id="licChangeKeyInput" placeholder="MNX-XXXXX-XXXXX-XXXXX-XXXXX"
+                               style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:6px;padding:10px 12px;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:1px;text-transform:uppercase;outline:none;box-sizing:border-box;margin-bottom:10px;">
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn btn-primary btn-sm" id="licChangeApplyBtn">
+                                <i class="fas fa-unlock-alt"></i> Apply
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="licChangeCancelBtn">Cancel</button>
+                        </div>
+                        <div id="licChangeError" style="display:none;margin-top:10px;padding:8px 10px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:6px;color:#fca5a5;font-size:12px;"></div>
+                    </div>
                 </div>
             </div>
 

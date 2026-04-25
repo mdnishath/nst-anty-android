@@ -82,15 +82,48 @@ _resources_path: Path | None = None
 
 
 def init(resources_path: str | Path):
-    """Set the project root that holds config/license.json."""
+    """Set the project root (used for one-time migration from old location)."""
     global _resources_path
     _resources_path = Path(resources_path)
-    (_resources_path / 'config').mkdir(parents=True, exist_ok=True)
+    # Ensure storage dir exists
+    _storage_dir().mkdir(parents=True, exist_ok=True)
+    # Migrate from old bundled location, but only if AppData copy doesn't exist
+    _migrate_from_resources()
+
+
+def _storage_dir() -> Path:
+    """Writable per-user folder for the license file (survives reinstalls)."""
+    if platform.system() == 'Windows':
+        base = Path(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')))
+    elif platform.system() == 'Darwin':
+        base = Path.home() / 'Library' / 'Application Support'
+    else:
+        base = Path(os.environ.get('XDG_DATA_HOME',
+                                   os.path.expanduser('~/.local/share')))
+    return base / 'NSTAntyAndroid'
 
 
 def _path() -> Path:
-    base = _resources_path or Path.cwd()
-    return base / 'config' / 'license.json'
+    return _storage_dir() / 'license.json'
+
+
+def _migrate_from_resources():
+    """If a license.json sits in the old resources/config/ location and no
+    AppData copy exists yet, copy it over once. After this, all writes go
+    to AppData (the bundled file is read-only after install)."""
+    if _resources_path is None:
+        return
+    new = _path()
+    if new.exists():
+        return
+    old = _resources_path / 'config' / 'license.json'
+    if not old.exists():
+        return
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        new.write_text(old.read_text('utf-8'), 'utf-8')
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

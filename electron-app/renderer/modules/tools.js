@@ -297,94 +297,133 @@
         }
     }
 
-    // ── License Info ────────────────────────────────────────────────────────
+    // ── License panel ───────────────────────────────────────────────────────
 
     function setupLicenseInfo() {
-        const deactivateBtn = document.getElementById('licenseDeactivateBtn');
-        if (deactivateBtn) {
-            deactivateBtn.addEventListener('click', async () => {
-                if (!confirm('Are you sure you want to deactivate your license?\nYou will need to re-enter your license key.')) {
-                    return;
+        const refreshBtn   = document.getElementById('licRefreshBtn');
+        const deactBtn     = document.getElementById('licDeactivateBtn');
+        const changeBtn    = document.getElementById('licChangeBtn');
+        const cancelBtn    = document.getElementById('licChangeCancelBtn');
+        const applyBtn     = document.getElementById('licChangeApplyBtn');
+        const formEl       = document.getElementById('licChangeForm');
+        const errEl        = document.getElementById('licChangeError');
+        const keyInputEl   = document.getElementById('licChangeKeyInput');
+
+        if (refreshBtn) refreshBtn.addEventListener('click', loadLicenseInfo);
+
+        if (deactBtn) deactBtn.addEventListener('click', async () => {
+            if (!confirm('Deactivate this license? You will need to re-enter the key to use the app.')) return;
+            try {
+                const res = await fetch('http://localhost:5000/api/license/deactivate', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    App.toast('License deactivated. Reloading…', 'success');
+                    setTimeout(() => location.reload(), 600);
+                } else {
+                    App.toast(data.message || 'Deactivation failed', 'error');
                 }
-                try {
-                    const res = await App.apiFetch('/api/license/deactivate', { method: 'POST' });
-                    const data = await res.json();
-                    if (data.success) {
-                        App.toast('License deactivated', 'success');
-                        location.reload();
-                    } else {
-                        App.toast(data.message || 'Deactivation failed', 'error');
-                    }
-                } catch (err) {
-                    App.toast('Error: ' + String(err), 'error');
-                }
+            } catch (e) { App.toast('Error: ' + e.message, 'error'); }
+        });
+
+        if (changeBtn && formEl) {
+            changeBtn.addEventListener('click', () => {
+                formEl.style.display = 'block';
+                if (errEl) errEl.style.display = 'none';
+                if (keyInputEl) { keyInputEl.value = ''; keyInputEl.focus(); }
+            });
+        }
+        if (cancelBtn && formEl) {
+            cancelBtn.addEventListener('click', () => {
+                formEl.style.display = 'none';
+                if (errEl) errEl.style.display = 'none';
             });
         }
 
+        const showErr = (msg) => {
+            if (!errEl) return;
+            errEl.style.display = 'block';
+            errEl.textContent = msg;
+        };
+
+        const doApply = async () => {
+            if (errEl) errEl.style.display = 'none';
+            const key = ((keyInputEl && keyInputEl.value) || '').trim();
+            if (!key) { showErr('Enter a license key'); return; }
+            applyBtn.disabled = true;
+            applyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
+            try {
+                const res = await fetch('http://localhost:5000/api/license/activate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ license_key: key })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    App.toast('License updated ✓ Reloading…', 'success');
+                    setTimeout(() => location.reload(), 600);
+                } else {
+                    showErr(data.message || 'Activation failed');
+                }
+            } catch (e) {
+                showErr('Could not reach backend: ' + e.message);
+            } finally {
+                applyBtn.disabled = false;
+                applyBtn.innerHTML = '<i class="fas fa-unlock-alt"></i> Apply';
+            }
+        };
+
+        if (applyBtn) applyBtn.addEventListener('click', doApply);
+        if (keyInputEl) keyInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') doApply(); });
     }
 
     async function loadLicenseInfo() {
-        const panel = document.getElementById('licenseInfoPanel');
-        const loading = document.getElementById('licenseInfoLoading');
+        const panel   = document.getElementById('licInfoPanel');
+        const loading = document.getElementById('licInfoLoading');
         if (!panel) return;
 
         try {
-            const res = await App.apiFetch('/api/license/info');
+            const res  = await fetch('http://localhost:5000/api/license/info');
             const data = await res.json();
             if (loading) loading.style.display = 'none';
-            panel.style.display = '';
+            panel.style.display = 'block';
 
-            // Populate fields
-            const keyEl = document.getElementById('licenseInfoKey');
-            const statusEl = document.getElementById('licenseInfoStatus');
-            const idEl = document.getElementById('licenseInfoId');
-            const expiryEl = document.getElementById('licenseInfoExpiry');
-            const daysEl = document.getElementById('licenseInfoDays');
-            const machineEl = document.getElementById('licenseInfoMachine');
+            const set = (id, html) => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = html;
+            };
 
-            if (keyEl) {
-                keyEl.textContent = data.license_key || 'N/A';
+            // Status
+            if (data.valid) {
+                set('licInfoStatus', '<span style="color:#22c55e;"><i class="fas fa-check-circle"></i> Active</span>');
+            } else {
+                set('licInfoStatus', '<span style="color:#ef4444;"><i class="fas fa-times-circle"></i> ' + (data.reason || 'Invalid') + '</span>');
             }
 
-            if (statusEl) {
-                if (data.valid) {
-                    statusEl.innerHTML = '<span style="color:var(--success);">Active</span>';
-                } else {
-                    statusEl.innerHTML = '<span style="color:var(--error);">Invalid</span>';
-                }
+            set('licInfoKey',        data.license_key || '—');
+            set('licInfoId',         data.license_id != null ? '#' + data.license_id : '—');
+            set('licInfoActivation', data.activation_date || '—');
+            set('licInfoMachine',    data.machine_id || '—');
+
+            // Tier
+            const tier = (data.tier || '—').toUpperCase();
+            const tierColor = data.tier === 'basic' ? '#60a5fa'
+                            : data.tier === 'pro'   ? '#c084fc' : '#94a3b8';
+            set('licInfoTier', '<span style="color:' + tierColor + ';font-weight:600;">' + tier + '</span>');
+
+            // Expiry + days remaining
+            if (data.days_remaining === -1) {
+                set('licInfoExpiry', '<span style="color:#22c55e;">Lifetime</span>');
+                set('licInfoDays',   '<span style="color:#22c55e;">Unlimited</span>');
+            } else if (data.days_remaining != null) {
+                set('licInfoExpiry', data.expiry_date || '—');
+                const c = data.days_remaining <= 7 ? '#ef4444' : '#22c55e';
+                set('licInfoDays', '<span style="color:' + c + ';">' + data.days_remaining + ' days</span>');
+            } else {
+                set('licInfoExpiry', data.expiry_date || '—');
+                set('licInfoDays',   '—');
             }
-
-            if (idEl) idEl.textContent = data.license_id != null ? '#' + data.license_id : 'N/A';
-
-            const tierEl = document.getElementById('licenseInfoTier');
-            if (tierEl) {
-                const tier = (data.tier || 'pro').toUpperCase();
-                const tierColor = data.tier === 'basic' ? '#60a5fa' : '#c084fc';
-                tierEl.innerHTML = '<span style="color:' + tierColor + ';">' + tier + '</span>';
-            }
-
-            if (expiryEl) {
-                if (data.days_remaining === -1) {
-                    expiryEl.textContent = 'Lifetime';
-                } else {
-                    expiryEl.textContent = data.expiry_date || 'N/A';
-                }
-            }
-
-            if (daysEl) {
-                if (data.days_remaining === -1) {
-                    daysEl.innerHTML = '<span style="color:var(--success);">Unlimited</span>';
-                } else if (data.days_remaining != null) {
-                    const color = data.days_remaining <= 7 ? 'var(--error)' : 'var(--success)';
-                    daysEl.innerHTML = '<span style="color:' + color + ';">' + data.days_remaining + ' days</span>';
-                } else {
-                    daysEl.textContent = 'N/A';
-                }
-            }
-
-            if (machineEl) machineEl.textContent = data.machine_id || 'N/A';
         } catch (err) {
-            if (loading) loading.textContent = 'Failed to load license info';
+            if (loading) loading.textContent = 'Failed to load license info: ' + err.message;
         }
     }
 
