@@ -3823,6 +3823,14 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
 
 async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
     """Single-attempt login implementation (no retries — caller wraps with timeout)."""
+    # ── Anti-thundering-herd jitter ───────────────────────────────────────
+    # When N workers are spawned simultaneously they all hit Google's
+    # signin endpoint through the same proxy IP at the same instant, which
+    # produces partially-loaded /identifier pages. A small random jitter
+    # at the start of each worker spreads the bursts out.
+    import random as _r
+    _jitter = _r.uniform(0.0, 4.0)
+    await asyncio.sleep(_jitter)
     from playwright.async_api import async_playwright
     from src.screen_detector import ScreenDetector
     from src.utils import TOTPGenerator, ConfigManager

@@ -625,27 +625,52 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                 await asyncio.sleep(0.5)
             return False
 
-        # Initial transition wait — page usually moves within 2-5s
-        progressed = await _wait_for_transition(budget_seconds=12)
+        # Initial transition wait — proxy can be slow, so give it 25s on
+        # first try. Polling exits early as soon as page actually moves.
+        progressed = await _wait_for_transition(budget_seconds=25)
 
         if not progressed:
-            _log(worker_id, "STEP[2/4] EMAIL: no transition in 12s — entering reload-and-retry loop")
+            _log(worker_id, "STEP[2/4] EMAIL: no transition in 25s — entering hard-recovery loop")
 
-        # Up to 3 reload-and-retype cycles to recover stuck pages
-        for _stuck_attempt in range(1, 4):
+        # Up to 4 hard-recovery cycles. Each one:
+        #   1. window.stop() to kill any in-flight network requests
+        #   2. page.goto() to a CACHE-BUSTED login URL (full fresh navigation,
+        #      not page.reload() which can inherit stuck connection state)
+        #   3. wait for email field interactivity
+        #   4. real-keystroke retype + Enter
+        #   5. event-driven transition wait
+        import time as _time
+        for _stuck_attempt in range(1, 5):
             if progressed:
                 break
 
-            _log(worker_id, f"STEP[2/4] EMAIL: stuck recovery attempt {_stuck_attempt}/3 — reloading + re-typing email")
-            try:
-                await page.reload(wait_until='domcontentloaded', timeout=45000)
-            except Exception as _rl_err:
-                _log(worker_id, f"STEP[2/4] EMAIL: reload error (continuing): {_rl_err}")
+            _log(worker_id, f"STEP[2/4] EMAIL: hard recovery {_stuck_attempt}/4 — stop + fresh goto + retype")
 
-            # Wait for email field interactivity
+            # Step 1: kill in-flight requests to clear stuck connection state
+            try:
+                await page.evaluate("() => { try { window.stop(); } catch(e) {} }")
+            except Exception:
+                pass
+
+            # Step 2: full fresh navigation with cache-buster — much more
+            # effective than page.reload() when the underlying network
+            # connection is wedged.
+            sep = '&' if '?' in login_url else '?'
+            fresh_url = f"{login_url}{sep}_nstr={_time.time_ns()}"
+            try:
+                await page.goto(fresh_url, wait_until='domcontentloaded', timeout=60000)
+            except Exception as _gerr:
+                _log(worker_id, f"STEP[2/4] EMAIL: goto error (continuing): {_gerr}")
+                # Last-ditch fallback to plain reload if goto failed
+                try:
+                    await page.reload(wait_until='domcontentloaded', timeout=45000)
+                except Exception:
+                    pass
+
+            # Wait for email field interactivity (longer budget — slow proxy)
             _email_el = None
             _email_sel = None
-            _deadline = asyncio.get_event_loop().time() + 15
+            _deadline = asyncio.get_event_loop().time() + 25
             while asyncio.get_event_loop().time() < _deadline and _email_el is None:
                 for _sel in ('input[type="email"]', 'input#identifierId',
                              'input[name="identifier"]', 'input[autocomplete="username"]'):
@@ -695,17 +720,17 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                     except Exception:
                         continue
 
-            # Wait for transition again — same event-driven polling
-            progressed = await _wait_for_transition(budget_seconds=12)
+            # Wait for transition again — same event-driven polling, longer budget
+            progressed = await _wait_for_transition(budget_seconds=20)
             if progressed:
-                _log(worker_id, f"STEP[2/4] EMAIL: ✓ transitioned after reload attempt {_stuck_attempt}/3")
+                _log(worker_id, f"STEP[2/4] EMAIL: transitioned after recovery attempt {_stuck_attempt}/4")
                 break
-            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt}/3")
+            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt}/4")
 
         if not progressed:
-            _log(worker_id, "STEP[2/4] EMAIL: FAILED to transition after 3 reload attempts — failing this profile")
+            _log(worker_id, "STEP[2/4] EMAIL: FAILED to transition after 4 recovery attempts — failing this profile")
             # Raise so this profile's worker exits cleanly instead of hanging
-            raise Exception("EMAIL_STUCK - Page never transitioned past /identifier after 3 reloads")
+            raise Exception("EMAIL_STUCK - Page never transitioned past /identifier after 4 recoveries")
 
         _log(worker_id, f"STEP[2/4] EMAIL: progressed past identifier. URL = {page.url[:100]}")
 
