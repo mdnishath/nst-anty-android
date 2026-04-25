@@ -572,97 +572,105 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
         await asyncio.sleep(8)
         _log(worker_id, f"STEP[2/4] EMAIL: After Next. URL = {page.url[:100]}")
 
-        # ── Stuck-loader recovery ─────────────────────────────────────────
-        # When 10+ workers hit Google's identifier endpoint at once, some
-        # browsers get stuck on a half-loaded /signin/identifier page even
-        # after Next click — URL stays on identifier, the email field is
-        # still visible, and no password field appears. User confirmed
-        # that a manual reload + re-entering the email always recovers.
-        # Try this up to 2 times.
-        for _stuck_attempt in range(1, 3):
+        # ── Stuck-loader recovery (aggressive) ────────────────────────────
+        # When N>=5 workers hit Google's identifier endpoint at once, some
+        # browsers stay stuck on /signin/identifier even after Enter/Next:
+        # URL stays on identifier, no password field appears. The user
+        # verified that reloading the page + re-typing the email always
+        # recovers — we replicate that flow here, up to 3 times.
+        async def _has_password_field() -> bool:
             try:
-                _cur_url = page.url
-                _stuck_on_identifier = '/identifier' in _cur_url
-                if not _stuck_on_identifier:
+                return await page.locator(
+                    'input[type="password"], input[name="password"], input[name="Passwd"]'
+                ).first.is_visible(timeout=1500)
+            except Exception:
+                return False
+
+        async def _is_stuck_on_identifier() -> bool:
+            cur = page.url
+            if '/identifier' not in cur:
+                return False
+            return not await _has_password_field()
+
+        for _stuck_attempt in range(1, 4):
+            try:
+                # Give the page a brief moment to finish transitioning
+                # (helps when proxy is slow but ultimately succeeds).
+                if not await _is_stuck_on_identifier():
                     break
 
-                # Check for the strong signal: password field has appeared
-                _has_pw_field = False
-                try:
-                    _has_pw_field = await page.locator(
-                        'input[type="password"], input[name="password"], input[name="Passwd"]'
-                    ).first.is_visible(timeout=1200)
-                except Exception:
-                    pass
-                if _has_pw_field:
-                    break   # we transitioned, just URL still has /identifier — fine
+                _log(worker_id, f"STEP[2/4] EMAIL: detected stuck state (attempt {_stuck_attempt}/3) — reloading + re-typing email")
 
-                # Definitely stuck if email field is still visible
-                _email_still_visible = False
-                try:
-                    _email_still_visible = await page.locator(
-                        'input[type="email"], input#identifierId, input[name="identifier"]'
-                    ).first.is_visible(timeout=1200)
-                except Exception:
-                    pass
-
-                if not _email_still_visible:
-                    # Page in some intermediate state — give it a moment, recheck once
-                    await asyncio.sleep(3)
-                    try:
-                        _has_pw_field = await page.locator(
-                            'input[type="password"]'
-                        ).first.is_visible(timeout=1200)
-                    except Exception:
-                        pass
-                    if _has_pw_field:
-                        break
-
-                _log(worker_id, f"STEP[2/4] EMAIL: page stuck on identifier (attempt {_stuck_attempt}/2) — reloading and re-entering email")
-
+                # Hard reload — same as user's manual fix
                 try:
                     await page.reload(wait_until='domcontentloaded', timeout=45000)
                 except Exception as _rl_err:
                     _log(worker_id, f"STEP[2/4] EMAIL: reload error (continuing): {_rl_err}")
-                await asyncio.sleep(4)
 
-                # Re-fill the email field
-                _refill_done = False
-                for _sel in ['input[type="email"]', 'input#identifierId',
-                             'input[name="identifier"]', 'input[autocomplete="username"]']:
-                    try:
-                        _e = page.locator(_sel).first
-                        if await _e.is_visible(timeout=2000):
-                            await _e.click()
-                            await _e.fill('')
-                            await _e.fill(email)
-                            _refill_done = True
-                            _log(worker_id, f"STEP[2/4] EMAIL: re-filled email after reload via '{_sel}'")
-                            break
-                    except Exception:
-                        continue
+                # Wait for email field to be interactive again (visible AND enabled)
+                _email_ready = False
+                _email_el = None
+                _email_sel = None
+                for _i in range(15):    # up to ~15s
+                    for _sel in ('input[type="email"]', 'input#identifierId',
+                                 'input[name="identifier"]', 'input[autocomplete="username"]'):
+                        try:
+                            _el = page.locator(_sel).first
+                            if (await _el.count() > 0
+                                    and await _el.is_visible(timeout=500)
+                                    and await _el.is_enabled(timeout=500)):
+                                _email_el = _el
+                                _email_sel = _sel
+                                _email_ready = True
+                                break
+                        except Exception:
+                            continue
+                    if _email_ready:
+                        break
+                    await asyncio.sleep(1)
 
-                if not _refill_done:
-                    _log(worker_id, "STEP[2/4] EMAIL: could not find email field after reload — bailing recovery")
-                    break
+                if not _email_ready:
+                    _log(worker_id, "STEP[2/4] EMAIL: email field never became interactive after reload — retrying")
+                    continue
 
-                # Click Next again
-                for _sel in _email_next_sels:
-                    try:
-                        _btn = page.locator(_sel).first
-                        if await _btn.is_visible(timeout=2000):
-                            await _btn.click()
-                            break
-                    except Exception:
-                        continue
+                # Real-keystroke re-entry (same robust path as the first attempt)
+                try:
+                    await _email_el.click(timeout=3000)
+                except Exception:
+                    pass
+                try:
+                    await _email_el.fill('')
+                except Exception:
+                    pass
+                await page.keyboard.type(email, delay=25)
+                _log(worker_id, f"STEP[2/4] EMAIL: re-typed email via '{_email_sel}' after reload")
 
-                _log(worker_id, f"STEP[2/4] EMAIL: re-clicked Next after reload (attempt {_stuck_attempt}/2) — waiting 8s")
-                await asyncio.sleep(8)
-                _log(worker_id, f"STEP[2/4] EMAIL: After reload+Next. URL = {page.url[:100]}")
-                # Loop will re-check URL/password-field on next iteration
+                await asyncio.sleep(1)
+                # Submit via Enter — most reliable on partially-hydrated pages
+                try:
+                    await page.keyboard.press('Enter')
+                except Exception:
+                    # Fallback to button click
+                    for _sel in _email_next_sels:
+                        try:
+                            _btn = page.locator(_sel).first
+                            if await _btn.is_visible(timeout=2000):
+                                await _btn.click()
+                                break
+                        except Exception:
+                            continue
+
+                _log(worker_id, f"STEP[2/4] EMAIL: re-submitted (attempt {_stuck_attempt}/3) — waiting 10s for transition")
+                await asyncio.sleep(10)
+                _log(worker_id, f"STEP[2/4] EMAIL: post-reload URL = {page.url[:100]}")
+                # Loop re-checks _is_stuck_on_identifier() on next iteration
             except Exception as _stuck_err:
                 _log(worker_id, f"STEP[2/4] EMAIL: stuck-recovery error (non-fatal): {_stuck_err}")
-                break
+                # Don't break — try the next iteration in case it was transient
+
+        # Final check — log if we're still stuck after all retries
+        if await _is_stuck_on_identifier():
+            _log(worker_id, "STEP[2/4] EMAIL: WARNING — still stuck on identifier after 3 reload attempts; flow will likely fail")
 
         # POST-EMAIL: CAPTCHA check
         _log(worker_id, "STEP[2/4] EMAIL: Checking for post-email CAPTCHA...")
