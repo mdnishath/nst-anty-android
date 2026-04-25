@@ -508,50 +508,28 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                 pass
             raise Exception("Could not enter email - input field not found")
 
-        await asyncio.sleep(1)
-        # Submit primarily via keyboard Enter — works even when the Next
-        # button is half-hydrated and clicks get dropped. Click is kept as
-        # a fallback if Enter doesn't trigger the URL transition.
+        # Submit via Enter — no pre-sleeps. Detection starts immediately
+        # so the 3-second stuck window starts ticking right after submit.
         _email_next_sels = [
             '#identifierNext', 'button[jsname="LgbsSe"]',
             'button:has-text("Next")', 'button:has-text("Suivant")',
             'button:has-text("Weiter")', 'button:has-text("Далее")',
             'button[type="submit"]',
         ]
-        _clicked_email_next = False
         try:
             _log(worker_id, "STEP[2/4] EMAIL: Submitting via Enter key...")
             await page.keyboard.press('Enter')
-            _clicked_email_next = True
-            await asyncio.sleep(2)
         except Exception as _kerr:
             _log(worker_id, f"STEP[2/4] EMAIL: Enter press failed: {_kerr}")
-
-        # If the URL hasn't changed after Enter, fall back to clicking Next
-        try:
-            _post_enter_url = page.url
-            _still_on_id = '/identifier' in _post_enter_url and not await page.locator(
-                'input[type="password"]'
-            ).first.is_visible(timeout=800)
-        except Exception:
-            _still_on_id = True
-
-        if _still_on_id:
-            _log(worker_id, "STEP[2/4] EMAIL: Enter didn't transition page — clicking Next button as fallback")
+            # Fallback to button click if Enter itself errored
             for _sel in _email_next_sels:
                 try:
                     _btn = page.locator(_sel).first
-                    if await _btn.is_visible(timeout=2000):
+                    if await _btn.is_visible(timeout=1500):
                         await _btn.click()
-                        _clicked_email_next = True
                         break
                 except Exception:
                     continue
-            if not _clicked_email_next:
-                try:
-                    await page.locator('#identifierNext, button[type="submit"]').first.click(timeout=5000)
-                except Exception:
-                    pass
 
         # ── Event-driven transition wait + auto-reload-and-retry ──────────
         # Instead of a fixed 8s sleep + a separate recovery loop, poll
