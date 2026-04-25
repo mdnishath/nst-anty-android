@@ -1453,11 +1453,74 @@ def add_log(message, log_type='info'):
         print(f"[{log_type.upper()}] {safe_msg}")
 
 
-# ── Auth Endpoints (licensing removed) ───────────────────────────────────────
+# ── Auth Endpoints (licensing enforced) ──────────────────────────────────────
+from shared import license_manager
+license_manager.init(RESOURCES_PATH)
+
 
 @app.route('/api/auth/status', methods=['GET'])
 def auth_status():
-    return jsonify({'success': True, 'auth_enabled': False, 'license_activated': True})
+    info = license_manager.get_license_info()
+    return jsonify({
+        'success': True,
+        'auth_enabled': True,
+        'license_activated': info.get('valid', False),
+        'reason': info.get('reason'),
+        'tier': info.get('tier'),
+        'days_remaining': info.get('days_remaining'),
+    })
+
+
+@app.route('/api/license/info', methods=['GET'])
+def license_info():
+    return jsonify(license_manager.get_license_info())
+
+
+@app.route('/api/license/activate', methods=['POST'])
+def license_activate():
+    body = request.get_json(silent=True) or {}
+    key = (body.get('license_key') or '').strip()
+    if not key:
+        return jsonify({'success': False, 'message': 'license_key required'}), 400
+    return jsonify(license_manager.activate(key))
+
+
+@app.route('/api/license/deactivate', methods=['POST'])
+def license_deactivate():
+    return jsonify(license_manager.deactivate())
+
+
+@app.route('/api/license/reseal', methods=['POST'])
+def license_reseal():
+    """Re-sign existing license.json after a secret rotation. Admin-only."""
+    ok = license_manager.reseal_existing()
+    return jsonify({'success': ok})
+
+
+# Whitelist of paths that should always be reachable, even when license invalid.
+_LICENSE_OPEN_PATHS = {
+    '/api/health', '/api/app/version', '/api/auth/status',
+    '/api/license/info', '/api/license/activate',
+    '/api/license/deactivate', '/api/license/reseal',
+    '/api/shutdown', '/api/log-stream',
+}
+
+
+@app.before_request
+def _gate_license():
+    """Block API endpoints when license is invalid (except whitelisted ones)."""
+    p = request.path or ''
+    if not p.startswith('/api/'):
+        return None
+    if p in _LICENSE_OPEN_PATHS:
+        return None
+    if license_manager.is_licensed():
+        return None
+    return jsonify({
+        'success': False,
+        'license_required': True,
+        'message': 'License required. Please activate first.',
+    }), 403
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1909,9 +1972,11 @@ def profiles_export_excel():
             pu   = proxy.get('username', '')
             pp   = proxy.get('password', '')
             ptype = proxy.get('type', 'http')
-            proxy_str = f"{ptype}://{host}:{port}"
+            # Standard URL format: scheme://user:pass@host:port
             if pu or pp:
-                proxy_str += f"  ({pu}:{pp})"
+                proxy_str = f"{ptype}://{pu}:{pp}@{host}:{port}"
+            else:
+                proxy_str = f"{ptype}://{host}:{port}"
         else:
             proxy_str = ''
 
@@ -3587,7 +3652,11 @@ def run_app():
     print("Gmail Bot Backend Server")
     print("=" * 60)
     print("Server starting on http://localhost:5000")
-    print("[AUTH] No license required — open access")
+    _lic = license_manager.get_license_info()
+    if _lic.get('valid'):
+        print(f"[AUTH] License OK (tier={_lic.get('tier')}, days_left={_lic.get('days_remaining')})")
+    else:
+        print(f"[AUTH] License INVALID — {_lic.get('reason')} — most endpoints blocked until activation")
     print("Server started - Ready to accept requests")
     print("=" * 60)
     app.run(host='127.0.0.1', port=5000, debug=False, threaded=True, use_reloader=False)

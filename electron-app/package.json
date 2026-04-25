@@ -1,6 +1,6 @@
 {
   "name": "nexus-anty-profile-manager",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "NST-powered Anti-Detection Profile Manager",
   "main": "main.js",
   "scripts": {

@@ -793,9 +793,14 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
         }
         # Chrome args — disable DoH to prevent DNS leak through proxy
         _chrome_args = {
-            '--disable-features': 'DnsOverHttps',
+            '--disable-features': 'DnsOverHttps,AsyncDns',
             '--dns-over-https-mode': 'off',
         }
+        # Per-profile DNS override: empty = use system DNS, which routes through
+        # the proxy instead of the group-level Google DoH (causes DNS leak to
+        # Switzerland / Google anycast). Must be set at create time — NST API
+        # does not accept PATCH updates to this field for existing profiles.
+        nst_body['dnsServer'] = ''
         if is_mobile_nst:
             _chrome_args['--use-mobile-user-agent'] = True
             _chrome_args['--disable-backgrounding-occluded-windows'] = True

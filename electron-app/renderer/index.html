@@ -9,7 +9,57 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body style="background:#0f1117;">
-    <!-- loginOverlay removed (no licensing) -->
+    <!-- ══════════════════════════════════════════════════════════════════════
+         License Activation Gate — appears on startup if no valid license.
+         Shown by App.checkLicense() in app.js; blocks the entire UI behind it.
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div id="licenseGate" style="display:none;position:fixed;inset:0;z-index:99998;
+                                  background:radial-gradient(circle at 50% 30%,#1e1b4b 0%,#0f1117 70%);
+                                  align-items:center;justify-content:center;flex-direction:column;
+                                  font-family:system-ui,sans-serif;color:#e2e8f0;">
+        <div style="background:#1a1f2e;border:1px solid rgba(99,102,241,0.4);border-radius:14px;
+                    padding:36px 40px;max-width:480px;width:90%;
+                    box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+            <div style="text-align:center;margin-bottom:24px;">
+                <i class="fas fa-key" style="font-size:36px;color:#a5b4fc;margin-bottom:12px;"></i>
+                <h2 style="margin:0;font-size:22px;color:#fff;">License Activation Required</h2>
+                <p id="licenseGateReason" style="margin:8px 0 0;font-size:13px;color:#94a3b8;">
+                    Enter your license key to continue.
+                </p>
+            </div>
+
+            <div style="margin-bottom:14px;">
+                <label style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px;">
+                    License Key
+                </label>
+                <input type="text" id="licenseGateKey" placeholder="MNX-XXXXX-XXXXX-XXXXX-XXXXX"
+                       style="width:100%;background:#0f1629;border:1px solid rgba(99,102,241,0.3);
+                              border-radius:8px;padding:12px 14px;color:#e2e8f0;
+                              font-size:14px;font-family:'Consolas',monospace;letter-spacing:1px;
+                              text-transform:uppercase;outline:none;box-sizing:border-box;">
+            </div>
+
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;font-size:11px;color:#64748b;">
+                <i class="fas fa-fingerprint"></i>
+                <span>Machine ID: <span id="licenseGateMachineId" style="color:#a5b4fc;font-family:monospace;">—</span></span>
+                <button id="licenseGateCopyMid" style="margin-left:auto;background:transparent;border:1px solid rgba(99,102,241,0.3);
+                                                       color:#a5b4fc;font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;">Copy</button>
+            </div>
+
+            <button id="licenseGateActivate"
+                    style="width:100%;background:linear-gradient(90deg,#6366f1,#8b5cf6);
+                           border:none;color:#fff;padding:12px;border-radius:8px;
+                           font-size:14px;font-weight:600;cursor:pointer;">
+                <i class="fas fa-unlock-alt" style="margin-right:6px;"></i> Activate
+            </button>
+
+            <div id="licenseGateError" style="display:none;margin-top:12px;padding:10px 12px;
+                                              background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);
+                                              border-radius:6px;color:#fca5a5;font-size:12px;"></div>
+        </div>
+    </div>
+
+    <!-- legacy placeholder kept so old selectors don't break -->
     <div id="loginOverlay" style="display:none;"></div>
 
     <!-- ── Launch Splash Screen ──────────────────────────────────────────── -->
@@ -354,7 +404,7 @@
                     </div>
                     <div class="form-group">
                         <label>Default Workers</label>
-                        <input type="number" id="cfg_workers" min="1" max="20" placeholder="5">
+                        <input type="number" id="cfg_workers" min="1" max="100" placeholder="5">
                     </div>
                     <div class="form-group">
                         <label>Max Retries</label>
@@ -453,7 +503,7 @@
                 <div style="width:1px;height:24px;background:rgba(255,255,255,0.1);"></div>
                 <!-- Re-login -->
                 <i class="fas fa-sign-in-alt" style="color:#22c55e;font-size:12px;"></i>
-                <input type="number" id="pmBulkReloginWorkers" value="2" min="1" max="5" title="Workers (max 5)"
+                <input type="number" id="pmBulkReloginWorkers" value="2" min="1" max="100" title="Workers"
                     style="background:#0f1629;border:1px solid #22c55e44;border-radius:6px;padding:5px 8px;color:#e2e8f0;font-size:12px;width:60px;">
                 <input type="number" id="pmBulkReloginStagger" value="3" min="0" max="30" title="Stagger delay (sec) between workers"
                     style="background:#0f1629;border:1px solid #22c55e44;border-radius:6px;padding:5px 8px;color:#e2e8f0;font-size:12px;width:55px;"
@@ -802,7 +852,7 @@
                     </div>
                 </div>
                 <div style="display:flex;gap:12px;">
-                    <div class="form-group" style="flex:1;"><label>Workers</label><input type="number" id="batchLoginWorkers" value="3" min="1" max="20" style="width:100px;"></div>
+                    <div class="form-group" style="flex:1;"><label>Workers</label><input type="number" id="batchLoginWorkers" value="3" min="1" max="100" style="width:100px;"></div>
                     <div class="form-group" style="flex:1;">
                         <label>Stagger Delay (sec)</label>
                         <input type="number" id="batchLoginStagger" value="3" min="0" max="30" style="width:100px;" title="Delay between worker starts to avoid IP rate-limiting">
@@ -1132,7 +1182,7 @@
                 <span id="appealModeHint" style="font-size:13px;color:#94a3b8;flex:1;">Select profiles to run Appeal on.</span>
                 <div style="display:flex;align-items:center;gap:8px;">
                     <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Workers:</label>
-                    <input type="number" id="appealWorkers" value="3" min="1" max="10" style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
+                    <input type="number" id="appealWorkers" value="3" min="1" max="100" style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
                 </div>
             </div>
             <!-- SELECT mode controls -->
@@ -1229,7 +1279,7 @@
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Workers:</label>
-                        <input type="number" id="healthWorkers" value="3" min="1" max="10" style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
+                        <input type="number" id="healthWorkers" value="3" min="1" max="100" style="width:56px;background:#1a1a1a;color:#e2e8f0;border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:4px 8px;font-size:12px;text-align:center;">
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Rounds:</label>
@@ -1616,7 +1666,7 @@
                     <!-- Workers + Stagger -->
                     <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
                         <label style="font-size:11px;color:#94a3b8;white-space:nowrap;">Workers:</label>
-                        <input type="number" id="runOpsWorkers" value="5" min="1" max="10" style="background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:4px 6px;color:#e2e8f0;font-size:12px;width:50px;">
+                        <input type="number" id="runOpsWorkers" value="5" min="1" max="100" style="background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:4px 6px;color:#e2e8f0;font-size:12px;width:60px;">
                         <label style="font-size:11px;color:#94a3b8;white-space:nowrap;">Stagger:</label>
                         <input type="number" id="runOpsStagger" value="3" min="0" max="30" style="background:#0f1629;border:1px solid rgba(99,102,241,0.3);border-radius:5px;padding:4px 6px;color:#e2e8f0;font-size:12px;width:50px;" title="Seconds between worker launches">
                         <span style="font-size:10px;color:#64748b;">sec</span>
@@ -1752,7 +1802,7 @@
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;">
                     <label style="font-size:12px;color:#94a3b8;white-space:nowrap;">Workers</label>
-                    <input type="number" id="writeReviewWorkers" value="3" min="1" max="10" style="width:70px;background:#111;border:1px solid #475569;border-radius:6px;padding:5px 8px;color:#e2e8f0;font-size:13px;">
+                    <input type="number" id="writeReviewWorkers" value="3" min="1" max="100" style="width:70px;background:#111;border:1px solid #475569;border-radius:6px;padding:5px 8px;color:#e2e8f0;font-size:13px;">
                     <span style="font-size:11px;color:#475569;">Profiles are matched automatically by email from the Excel file.</span>
                 </div>
             </div>

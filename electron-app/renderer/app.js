@@ -214,8 +214,102 @@
         }).catch(function () {});
     }
 
+    // ── License gate ────────────────────────────────────────────────────
+    // Shows a full-screen overlay if no valid license. Backend's @before_request
+    // hook independently blocks API calls, so this is purely UX.
+    async function _setupLicenseGate() {
+        const gate    = document.getElementById('licenseGate');
+        const errEl   = document.getElementById('licenseGateError');
+        const reason  = document.getElementById('licenseGateReason');
+        const midEl   = document.getElementById('licenseGateMachineId');
+        const keyEl   = document.getElementById('licenseGateKey');
+        const actBtn  = document.getElementById('licenseGateActivate');
+        const copyBtn = document.getElementById('licenseGateCopyMid');
+        if (!gate) return true;   // no gate in DOM — assume legacy build, allow
+
+        function showError(msg) {
+            if (!errEl) return;
+            errEl.style.display = 'block';
+            errEl.textContent = msg;
+        }
+        function clearError() { if (errEl) errEl.style.display = 'none'; }
+
+        async function refreshStatus() {
+            try {
+                const r = await fetch('http://localhost:5000/api/license/info');
+                const d = await r.json();
+                if (midEl) midEl.textContent = d.machine_id || '—';
+                if (d.valid) {
+                    gate.style.display = 'none';
+                    return true;
+                }
+                gate.style.display = 'flex';
+                if (reason) reason.textContent = d.reason || 'Enter your license key to continue.';
+                return false;
+            } catch (e) {
+                // backend not up yet — retry briefly, then allow (offline mode)
+                gate.style.display = 'none';
+                return true;
+            }
+        }
+
+        if (copyBtn && midEl) {
+            copyBtn.addEventListener('click', () => {
+                try { navigator.clipboard.writeText(midEl.textContent || ''); } catch {}
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+            });
+        }
+
+        if (actBtn && keyEl) {
+            const doActivate = async () => {
+                clearError();
+                const key = (keyEl.value || '').trim();
+                if (!key) { showError('Please enter a license key'); return; }
+                actBtn.disabled = true;
+                actBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Activating…';
+                try {
+                    const r = await fetch('http://localhost:5000/api/license/activate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ license_key: key })
+                    });
+                    const d = await r.json();
+                    if (d.success) {
+                        gate.style.display = 'none';
+                        if (window.App && App.toast) App.toast('License activated ✓', 'success');
+                        // Reload so all panels refresh against the now-licensed backend.
+                        setTimeout(() => location.reload(), 600);
+                    } else {
+                        showError(d.message || 'Activation failed');
+                    }
+                } catch (e) {
+                    showError('Could not reach backend: ' + e.message);
+                } finally {
+                    actBtn.disabled = false;
+                    actBtn.innerHTML = '<i class="fas fa-unlock-alt" style="margin-right:6px;"></i> Activate';
+                }
+            };
+            actBtn.addEventListener('click', doActivate);
+            keyEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') doActivate(); });
+        }
+
+        // Poll for ~12s while the backend boots, then settle.
+        for (let i = 0; i < 6; i++) {
+            const ok = await refreshStatus();
+            if (ok || gate.style.display === 'flex') return ok;
+            await new Promise(r => setTimeout(r, 2000));
+        }
+        return false;
+    }
+    App.checkLicense = _setupLicenseGate;
+
     // ── Init ────────────────────────────────────────────────────────────
     function init() {
+        // Fire license gate setup early — non-blocking; the overlay covers
+        // the UI on its own if validation fails.
+        _setupLicenseGate();
+
         setupNavigation();
         App.setupServerToggle();
         // Process page removed — guard optional setup calls

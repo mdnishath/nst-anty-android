@@ -1063,7 +1063,7 @@ def batch_login(file_path: str, num_workers: int = 3,
     """
     import pandas as pd
 
-    num_workers = max(1, min(num_workers, 10))
+    num_workers = max(1, num_workers)   # no upper cap — respect user input
 
     try:
         df = pd.read_excel(file_path)
@@ -1337,7 +1337,7 @@ def do_all_appeal_profiles(num_workers: int = 5, profile_ids: list = None, **kwa
     if not available:
         return {'success': False, 'error': 'All profiles already have browsers open'}
 
-    num_workers = max(1, min(num_workers, 20))
+    num_workers = max(1, num_workers)   # no upper cap — respect user input
     _log(f"[APPEAL] Starting Do All Appeal: {len(available)} profiles, {num_workers} workers")
 
     _appeal_status = {
@@ -1748,7 +1748,7 @@ def _review_worker(matched: list, num_workers: int):
             _log(f"[REVIEW] {email}: ERROR: {e}", 'error')
             return row
 
-    with ThreadPoolExecutor(max_workers=max(1, min(num_workers, 10)),
+    with ThreadPoolExecutor(max_workers=max(1, num_workers),
                              thread_name_prefix='review') as pool:
         futures = {pool.submit(review_single, item): item for item in matched}
         for future in as_completed(futures):
@@ -2023,7 +2023,7 @@ def run_operations_on_profiles(operations: str, num_workers: int = 5,
     if not available:
         return {'success': False, 'error': 'All profiles have browsers open'}
 
-    num_workers = max(1, min(num_workers, 20))
+    num_workers = max(1, num_workers)   # no upper cap — respect user input
 
     # Distribute name list to profiles (round-robin) if provided
     if params and params.get('name_list'):
@@ -3794,10 +3794,35 @@ async def _launch_profile_context(playwright, profile: dict):
 async def _login_profile(profile_id: str, profile: dict, account: dict):
     """Launch browser, run login flow, close browser. Returns True on success.
 
-    Outer retry: up to 3 full attempts (fresh browser launch each time).
-    Handles proxy slowness, NST API timeouts, browser disconnects mid-session.
-    Inner retry: up to 3 attempts on the same browser (re-navigate to login URL).
+    NO retries — fail-fast on first failure. Each whole attempt is wrapped
+    in a hard timeout so a stuck login can never hang the worker thread.
     """
+    # Hard ceiling — prevents the worker from hanging forever if Playwright,
+    # CDP, or NST stalls. Tweak via env var if needed.
+    import os as _os
+    _LOGIN_HARD_TIMEOUT = float(_os.environ.get('LOGIN_HARD_TIMEOUT', '180'))
+    try:
+        return await asyncio.wait_for(
+            _login_profile_impl(profile_id, profile, account),
+            timeout=_LOGIN_HARD_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        email = account.get('email', '?')
+        _log(f"[LOGIN] {email}: ✗ HARD TIMEOUT after {_LOGIN_HARD_TIMEOUT:.0f}s — killing browser", 'error')
+        # Best-effort kill the NST browser so resources are freed
+        engine = profile.get('engine', 'nexus')
+        if engine == 'nst':
+            try:
+                from shared.nexus_profile_manager import stop_nst_browser
+                nst_id = profile.get('nst_profile_id', profile_id)
+                await asyncio.to_thread(stop_nst_browser, nst_id)
+            except Exception:
+                pass
+        return False
+
+
+async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
+    """Single-attempt login implementation (no retries — caller wraps with timeout)."""
     from playwright.async_api import async_playwright
     from src.screen_detector import ScreenDetector
     from src.utils import TOTPGenerator, ConfigManager
@@ -3814,10 +3839,10 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
 
     last_error = 'not started'
 
-    for _outer in range(1, 4):           # up to 3 full browser-launch attempts
+    for _outer in range(1, 2):           # single attempt — retries removed per user request
         if _outer > 1:
-            wait_s = 8 + (_outer - 2) * 5   # 8s → 13s between outer retries
-            _log(f"[LOGIN] {email}: ── OUTER RETRY {_outer}/3 (fresh browser) — waiting {wait_s}s... ──")
+            wait_s = 8 + (_outer - 2) * 5
+            _log(f"[LOGIN] {email}: ── OUTER RETRY {_outer} (fresh browser) — waiting {wait_s}s... ──")
             await asyncio.sleep(wait_s)
 
         nst_profile_id = None
@@ -3944,11 +3969,11 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
 
                 from src.login_flow import execute_login_flow
 
-                # ── Inner retry loop (same browser, re-navigate) ──────────
+                # ── Inner loop disabled — single attempt only ─────────────
                 result = {'success': False, 'error': 'not started'}
-                for _inner in range(1, 4):   # 3 inner attempts on same browser
+                for _inner in range(1, 2):   # single attempt — retries removed per user request
                     if _inner > 1:
-                        _log(f"[LOGIN] {email}: inner retry {_inner}/3 — re-navigating...")
+                        _log(f"[LOGIN] {email}: inner retry {_inner} — re-navigating...")
                         try:
                             await page.goto(login_url, wait_until='domcontentloaded',
                                             timeout=45000)
@@ -3990,8 +4015,8 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
                             except Exception: pass
                         return False
 
-                    if _inner < 3:
-                        await asyncio.sleep(4)
+                    # No retry — break out (single attempt only)
+                    break
 
                 success = result.get('success', False)
                 last_error = result.get('error', last_error)
@@ -4015,10 +4040,8 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
                     _log(f"[LOGIN] {email}: ✓ logged in successfully (outer attempt {_outer}/3)")
                     return True
 
-                # Flow-level failure — may retry with fresh browser
-                if _outer < 3:
-                    _log(f"[LOGIN] {email}: will re-launch browser for outer retry {_outer+1}/3")
-                # fall through to next outer iteration
+                # Flow-level failure — no retry (single attempt mode)
+                # fall through to function return
 
         except Exception as e:
             last_error = str(e)
@@ -4046,7 +4069,7 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
                 return False
             # Otherwise outer loop will try again
 
-    _log(f"[LOGIN] {email}: ✗ all 3 outer attempts failed — last error: {last_error}", 'error')
+    _log(f"[LOGIN] {email}: ✗ login failed — {last_error}", 'error')
     return False
 
 
@@ -4178,7 +4201,7 @@ def run_health_activity(num_workers: int = 3, activities: list = None,
         activities = ['search_restaurants', 'search_news', 'gmail_inbox', 'youtube_browse_feed',
                       'maps_search_restaurants', 'news_headlines']
 
-    num_workers = max(1, min(num_workers, 20))
+    num_workers = max(1, num_workers)   # no upper cap — respect user input
     _log(f"[HEALTH] Starting: {len(available)} profiles, {num_workers} workers, {len(activities)} activities, country={country}")
 
     _health_status = {
