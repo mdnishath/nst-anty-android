@@ -722,10 +722,19 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
 
     # ── ENGINE: NST Browser (paid, API-based) ────────────────────────────
     elif engine == 'nst':
-        os_map = {'windows': 'windows', 'macos': 'macOS', 'linux': 'linux',
-                  'android': 'android', 'ios': 'ios'}
-        os_type = os_map.get(raw_os, 'windows')
+        # NST kernel only supports desktop platforms (windows/macOS/linux).
+        # For android/ios we still want the profile to live in NST, so we
+        # ship it with the WINDOWS kernel and apply mobile UA + mobile
+        # screen + the --use-mobile-user-agent Chrome flag. Result: Google
+        # treats the browser as mobile, but the launch goes through NST's
+        # cloud (no fallback to local nstchrome).
+        os_map = {'windows': 'windows', 'macos': 'macOS', 'linux': 'linux'}
         is_mobile_nst = raw_os in ('android', 'ios')
+        if is_mobile_nst:
+            os_type = 'windows'   # actual NST kernel
+            _log(f"NST mobile faux-{raw_os}: using windows kernel + mobile UA/screen/flags")
+        else:
+            os_type = os_map.get(raw_os, 'windows')
 
         # Pick screen based on device type (cap at 1440 width — avoids viewport issues)
         if is_mobile_nst:

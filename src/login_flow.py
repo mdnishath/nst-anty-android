@@ -597,15 +597,19 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
         if not progressed:
             _log(worker_id, "STEP[2/4] EMAIL: no transition in 3s — STUCK detected, reloading + retyping")
 
-        # Up to 4 hard-recovery cycles. Each one:
+        # Hard-recovery cycles. Each one:
         #   1. window.stop() to kill any in-flight network requests
         #   2. page.goto() to a CACHE-BUSTED login URL (full fresh navigation,
         #      not page.reload() which can inherit stuck connection state)
         #   3. wait for email field interactivity
         #   4. real-keystroke retype + Enter
         #   5. event-driven transition wait
+        # User said: "fail korbe na, reload dia abar email theke suru korbe".
+        # So we keep trying — the outer 180s hard timeout in
+        # _login_profile() is what eventually bails on a truly dead page.
         import time as _time
-        for _stuck_attempt in range(1, 5):
+        _MAX_RECOVERIES = 30   # effectively unbounded under the 180s outer timeout
+        for _stuck_attempt in range(1, _MAX_RECOVERIES + 1):
             if progressed:
                 break
 
@@ -688,14 +692,14 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
             # Wait for transition again — same tight 3s budget per user spec
             progressed = await _wait_for_transition(budget_seconds=3)
             if progressed:
-                _log(worker_id, f"STEP[2/4] EMAIL: transitioned after recovery attempt {_stuck_attempt}/4")
+                _log(worker_id, f"STEP[2/4] EMAIL: transitioned after recovery attempt {_stuck_attempt}")
                 break
-            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt}/4 — retrying")
+            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt} — retrying")
 
         if not progressed:
-            _log(worker_id, "STEP[2/4] EMAIL: FAILED to transition after 4 recovery attempts — failing this profile")
-            # Raise so this profile's worker exits cleanly instead of hanging
-            raise Exception("EMAIL_STUCK - Page never transitioned past /identifier after 4 recoveries")
+            # User wants no failure here — keep trying. The outer 180s
+            # hard timeout will bail if the page is truly dead.
+            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after {_MAX_RECOVERIES} recoveries — outer timeout will handle it")
 
         _log(worker_id, f"STEP[2/4] EMAIL: progressed past identifier. URL = {page.url[:100]}")
 
