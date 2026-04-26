@@ -599,21 +599,19 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
 
         # Hard-recovery cycles. Each one:
         #   1. window.stop() to kill any in-flight network requests
-        #   2. page.goto() to a CACHE-BUSTED login URL (full fresh navigation,
-        #      not page.reload() which can inherit stuck connection state)
+        #   2. page.goto() to a CACHE-BUSTED login URL
         #   3. wait for email field interactivity
         #   4. real-keystroke retype + Enter
         #   5. event-driven transition wait
         # User said: "fail korbe na, reload dia abar email theke suru korbe".
-        # So we keep trying — the outer 180s hard timeout in
-        # _login_profile() is what eventually bails on a truly dead page.
+        # The loop runs until progress OR until the outer 600s hard
+        # timeout in _login_profile() bails out.
         import time as _time
-        _MAX_RECOVERIES = 30   # effectively unbounded under the 180s outer timeout
-        for _stuck_attempt in range(1, _MAX_RECOVERIES + 1):
-            if progressed:
-                break
+        _stuck_attempt = 0
+        while not progressed:
+            _stuck_attempt += 1
 
-            _log(worker_id, f"STEP[2/4] EMAIL: hard recovery {_stuck_attempt}/4 — stop + fresh goto + retype")
+            _log(worker_id, f"STEP[2/4] EMAIL: hard recovery {_stuck_attempt} — stop + fresh goto + retype")
 
             # Step 1: kill in-flight requests to clear stuck connection state
             try:
@@ -674,7 +672,7 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
             except Exception as _type_err:
                 _log(worker_id, f"STEP[2/4] EMAIL: re-type error: {_type_err}")
                 continue
-            _log(worker_id, f"STEP[2/4] EMAIL: re-typed email via '{_email_sel}' (attempt {_stuck_attempt}/3)")
+            _log(worker_id, f"STEP[2/4] EMAIL: re-typed email via '{_email_sel}' (attempt {_stuck_attempt})")
 
             # Submit via Enter
             try:
@@ -696,12 +694,92 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                 break
             _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt} — retrying")
 
-        if not progressed:
-            # User wants no failure here — keep trying. The outer 180s
-            # hard timeout will bail if the page is truly dead.
-            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after {_MAX_RECOVERIES} recoveries — outer timeout will handle it")
-
+        # If we reach here, the loop exited because progressed=True.
+        # The only other way out is the outer hard timeout (asyncio cancels us).
         _log(worker_id, f"STEP[2/4] EMAIL: progressed past identifier. URL = {page.url[:100]}")
+
+        # ── Post-email error classification ───────────────────────────────
+        # After progressing past the identifier step, check for two
+        # very different alerts:
+        #   1. "Couldn't find your Google Account" → account doesn't
+        #      exist → retrying won't help → fail FAST.
+        #   2. "Something went wrong" → transient Google-side error
+        #      (very common under high concurrency) → reload + retry,
+        #      DO NOT fail.
+        async def _alert_text() -> str:
+            for _alert_sel in [
+                'div[role="alert"]', 'div[jsname][role="alert"]',
+            ]:
+                try:
+                    el = page.locator(_alert_sel).first
+                    if await el.count() > 0 and await el.is_visible(timeout=300):
+                        t = (await el.inner_text()).strip()
+                        if t:
+                            return t
+                except Exception:
+                    continue
+            return ''
+
+        _alert = await _alert_text()
+        if _alert:
+            _alert_low = _alert.lower()
+            # 1. Account not found → fast fail
+            if any(p in _alert_low for p in (
+                "couldn't find", "couldn’t find", "could not find",
+                "not find your google", "compte google introuvable",
+                "couldn't find your google",
+            )):
+                _log(worker_id, f"STEP[2/4] EMAIL: account-not-found alert: {_alert[:120]}")
+                raise Exception("ACCOUNT_NOT_FOUND - Google says this email does not exist")
+
+            # 2. Generic "Something went wrong" → transient → reload + retry
+            if any(p in _alert_low for p in (
+                'something went wrong', 'try again later',
+                'an error occurred', 'une erreur s\'est produite',
+            )):
+                _log(worker_id, f"STEP[2/4] EMAIL: transient 'something went wrong' alert — reloading + retyping")
+                # Loop back into the recovery cycle by clearing progressed
+                progressed = False
+                # Inline single recovery cycle
+                try:
+                    await page.evaluate("() => { try { window.stop(); } catch(e) {} }")
+                except Exception:
+                    pass
+                _sep2 = '&' if '?' in login_url else '?'
+                _fresh = f"{login_url}{_sep2}_nstr={_time.time_ns()}"
+                try:
+                    await page.goto(_fresh, wait_until='domcontentloaded', timeout=60000)
+                except Exception:
+                    pass
+                # wait for field
+                _email_el = None
+                _deadline2 = asyncio.get_event_loop().time() + 25
+                while asyncio.get_event_loop().time() < _deadline2 and _email_el is None:
+                    for _sel in ('input[type="email"]', 'input#identifierId',
+                                 'input[name="identifier"]', 'input[autocomplete="username"]'):
+                        try:
+                            _el = page.locator(_sel).first
+                            if (await _el.count() > 0
+                                    and await _el.is_visible(timeout=300)
+                                    and await _el.is_enabled(timeout=300)):
+                                _email_el = _el
+                                break
+                        except Exception:
+                            continue
+                    if _email_el is None:
+                        await asyncio.sleep(0.5)
+                if _email_el is not None:
+                    try: await _email_el.click(timeout=3000)
+                    except Exception: pass
+                    try: await _email_el.fill('')
+                    except Exception: pass
+                    await page.keyboard.type(email, delay=25)
+                    await page.keyboard.press('Enter')
+                    progressed = await _wait_for_transition(budget_seconds=5)
+                if not progressed:
+                    # If still showing 'something went wrong' after reload,
+                    # let the outer hard timeout handle it — don't fail here.
+                    _log(worker_id, "STEP[2/4] EMAIL: 'something went wrong' persisted after reload — letting outer timeout handle")
 
         # POST-EMAIL: CAPTCHA check
         _log(worker_id, "STEP[2/4] EMAIL: Checking for post-email CAPTCHA...")

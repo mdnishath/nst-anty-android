@@ -3814,13 +3814,16 @@ async def _launch_profile_context(playwright, profile: dict):
 async def _login_profile(profile_id: str, profile: dict, account: dict):
     """Launch browser, run login flow, close browser. Returns True on success.
 
-    NO retries — fail-fast on first failure. Each whole attempt is wrapped
-    in a hard timeout so a stuck login can never hang the worker thread.
+    User policy: only treat the login as FAILED for explicit account
+    problems (wrong password, TOTP failure, captcha, phone/email
+    verification, account disabled). Anything else — proxy slowness,
+    stuck loaders, NST hiccups — is a transient condition that should
+    NOT mark the profile as failed. The hard timeout is sized
+    generously (10 minutes) so we have plenty of room to recover from
+    stuck pages on a saturated proxy.
     """
-    # Hard ceiling — prevents the worker from hanging forever if Playwright,
-    # CDP, or NST stalls. Tweak via env var if needed.
     import os as _os
-    _LOGIN_HARD_TIMEOUT = float(_os.environ.get('LOGIN_HARD_TIMEOUT', '180'))
+    _LOGIN_HARD_TIMEOUT = float(_os.environ.get('LOGIN_HARD_TIMEOUT', '600'))
     try:
         return await asyncio.wait_for(
             _login_profile_impl(profile_id, profile, account),
@@ -3842,15 +3845,29 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
 
 
 async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
-    """Single-attempt login implementation (no retries — caller wraps with timeout)."""
-    # ── Anti-thundering-herd jitter ───────────────────────────────────────
-    # When N workers are spawned simultaneously they all hit Google's
-    # signin endpoint through the same proxy IP at the same instant, which
-    # produces partially-loaded /identifier pages. A small random jitter
-    # at the start of each worker spreads the bursts out.
+    """Single-attempt login implementation (no retries — caller wraps with timeout).
+
+    Workers spawned simultaneously hit Google + the proxy at the same
+    instant, which is exactly the load pattern that produces stuck
+    /identifier pages. We stagger each worker's actual start by giving
+    them a slot from a global counter (every Nth worker waits N×4s).
+    Combined with a small random jitter this gives ~0-40s spread for
+    a 10-worker batch — plenty of breathing room for the proxy.
+    """
     import random as _r
-    _jitter = _r.uniform(0.0, 4.0)
-    await asyncio.sleep(_jitter)
+    # Atomic slot allocation across all concurrent _login_profile_impl calls
+    global _login_stagger_counter, _login_stagger_lock
+    if '_login_stagger_lock' not in globals():
+        _login_stagger_lock = threading.Lock()
+        _login_stagger_counter = 0
+    with _login_stagger_lock:
+        slot = _login_stagger_counter % 12      # cap so 50th worker doesn't wait 200s
+        _login_stagger_counter += 1
+    _stagger = slot * 3.5 + _r.uniform(0.0, 1.5)
+    if _stagger > 0.05:
+        email = account.get('email', '?')
+        _log(f"[LOGIN] {email}: stagger sleep {_stagger:.1f}s (slot {slot})")
+        await asyncio.sleep(_stagger)
     from playwright.async_api import async_playwright
     from src.screen_detector import ScreenDetector
     from src.utils import TOTPGenerator, ConfigManager
@@ -3864,6 +3881,7 @@ async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
         'PASSWORD_INCORRECT', 'TOTP_FAILED', 'CHALLENGE_UNRESOLVABLE',
         'ACCOUNT_RECOVERY_REDIRECT', 'VERIFICATION_REQUIRED', 'SIGNIN_REJECTED',
         'PHONE_VERIFY_REQUIRED', 'PHONE_VERIFY_LOOP',
+        'ACCOUNT_NOT_FOUND',
     )
 
     last_error = 'not started'
