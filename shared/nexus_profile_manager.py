@@ -736,14 +736,17 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
         else:
             os_type = os_map.get(raw_os, 'windows')
 
-        # Pick screen based on device type (cap at 1440 width — avoids viewport issues)
-        if is_mobile_nst:
-            nst_screen = random.choice(_MOBILE_SCREENS)
-        else:
-            nst_screen = random.choice([s for s in _SCREEN_RESOLUTIONS if s[0] <= 1440])
+        # NST cloud only accepts DESKTOP-class screen sizes for the
+        # windows kernel — sending 412×915 fails the proxy-check step on
+        # the cloud side and the launch falls back to local nstchrome
+        # (no proxy enforcement → BD IP leaks). So we always pass a
+        # desktop screen to NST. The mobile look is applied later via
+        # CDP overrides at launch time.
+        nst_screen = random.choice([s for s in _SCREEN_RESOLUTIONS if s[0] <= 1440])
 
-        # Build NST profile body — unified for desktop and mobile
-        # Mobile UA
+        # Mobile UA is also NOT baked into the NST body — NST may reject
+        # mobile UA strings on a windows kernel. We attach it to the
+        # local profile metadata instead and apply via CDP at launch.
         mobile_ua = ''
         if is_mobile_nst:
             mobile_templates = _DESKTOP_UA_TEMPLATES.get(raw_os, [])
@@ -810,11 +813,10 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
         # Switzerland / Google anycast). Must be set at create time — NST API
         # does not accept PATCH updates to this field for existing profiles.
         nst_body['dnsServer'] = ''
-        if is_mobile_nst:
-            _chrome_args['--use-mobile-user-agent'] = True
-            _chrome_args['--disable-backgrounding-occluded-windows'] = True
-            if mobile_ua:
-                nst_body['fingerprint']['userAgent'] = mobile_ua
+        # NOTE: --use-mobile-user-agent and the mobile UA string are NOT
+        # baked into NST. NST's proxy-check rejects exotic combinations
+        # and triggers a local fallback that bypasses the proxy. Mobile
+        # masking is applied via Playwright CDP overrides at launch time.
         nst_body['args'] = _chrome_args
         if nst_proxy:
             nst_body['proxy'] = nst_proxy
@@ -922,14 +924,28 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
 
                 nst_screen = nst_fp.get('screen', {})
                 nst_webgl = nst_fp.get('webgl', {})
+                # For android/ios: NST profile is windows-kernel under the
+                # hood (so the proxy works), but we keep mobile metadata
+                # locally and apply mobile UA + viewport via CDP overrides
+                # at launch time. raw_os is the user-requested OS.
+                _local_os = raw_os if is_mobile_nst else nst_os
+                _local_ua = mobile_ua if (is_mobile_nst and mobile_ua) else nst_ua
+                _local_screen_w = (random.choice(_MOBILE_SCREENS)[0]
+                                   if is_mobile_nst else
+                                   nst_screen.get('width', fingerprint.get('screen_width', 1366)))
+                _local_screen_h = (random.choice(_MOBILE_SCREENS)[1]
+                                   if is_mobile_nst else
+                                   nst_screen.get('height', fingerprint.get('screen_height', 768)))
                 fingerprint = {
-                    'os_type': nst_os,
-                    'platform': nst_navigator.get('platform', _nst_plat_map.get(nst_platform_num, 'Win32')),
-                    'user_agent': nst_ua,
-                    'ua_template': nst_ua,
-                    'device_type': 'mobile' if nst_os in ('android', 'ios') else 'desktop',
-                    'screen_width': nst_screen.get('width', fingerprint.get('screen_width', 1366)),
-                    'screen_height': nst_screen.get('height', fingerprint.get('screen_height', 768)),
+                    'os_type': _local_os,
+                    'platform': ('Linux armv81' if raw_os == 'android'
+                                 else 'iPhone' if raw_os == 'ios'
+                                 else nst_navigator.get('platform', _nst_plat_map.get(nst_platform_num, 'Win32'))),
+                    'user_agent': _local_ua,
+                    'ua_template': _local_ua,
+                    'device_type': 'mobile' if is_mobile_nst else 'desktop',
+                    'screen_width': _local_screen_w,
+                    'screen_height': _local_screen_h,
                     'hardware_concurrency': nst_hw,
                     'device_memory': nst_mem,
                     'webgl_vendor': nst_webgl.get('vendor', fingerprint.get('webgl_vendor', '')),

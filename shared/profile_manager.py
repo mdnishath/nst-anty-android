@@ -3895,16 +3895,49 @@ async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
                         raise RuntimeError("NST browser connected but has no contexts")
                     context = browser_obj.contexts[0]
 
-                    # CDP platform override (Win version)
+                    # CDP overrides — apply mobile UA + viewport for android/ios
+                    # profiles (NST hosts them on a windows kernel for proxy
+                    # support, so we mask them as mobile at the CDP layer).
                     _ov = profile.get('overview', {})
-                    if _ov.get('os', 'windows') == 'windows':
-                        _WIN_PV_MAP = {'7': '0.1.0', '8': '0.3.0', '10': '10.0.0', '11': '15.0.0'}
-                        _win_num = _ov.get('os_version', 'Windows 11').replace('Windows ', '').strip()
-                        _win_pv  = _WIN_PV_MAP.get(_win_num, '15.0.0')
-                        try:
-                            _cdp_page = context.pages[0] if context.pages else await context.new_page()
-                            _cdp_sess = await context.new_cdp_session(_cdp_page)
-                            _cur_ua   = await _cdp_page.evaluate('navigator.userAgent')
+                    _fp = profile.get('fingerprint', {}) or {}
+                    _profile_os = _fp.get('os_type', _ov.get('os', 'windows'))
+                    _is_mobile_profile = _profile_os in ('android', 'ios')
+
+                    try:
+                        _cdp_page = context.pages[0] if context.pages else await context.new_page()
+                        _cdp_sess = await context.new_cdp_session(_cdp_page)
+
+                        if _is_mobile_profile:
+                            _ua = _fp.get('user_agent') or _fp.get('ua_template', '')
+                            _sw = int(_fp.get('screen_width', 412) or 412)
+                            _sh = int(_fp.get('screen_height', 915) or 915)
+                            _plat = 'Android' if _profile_os == 'android' else 'iOS'
+                            _model = 'Pixel 8 Pro' if _profile_os == 'android' else 'iPhone'
+                            if _ua:
+                                await _cdp_sess.send('Emulation.setUserAgentOverride', {
+                                    'userAgent': _ua,
+                                    'userAgentMetadata': {
+                                        'platform': _plat, 'platformVersion': '14',
+                                        'architecture': '', 'model': _model, 'mobile': True,
+                                        'brands': [
+                                            {'brand': 'Chromium', 'version': '133'},
+                                            {'brand': 'Not/A)Brand', 'version': '24'},
+                                            {'brand': 'Google Chrome', 'version': '133'},
+                                        ],
+                                    }
+                                })
+                            await _cdp_sess.send('Emulation.setDeviceMetricsOverride', {
+                                'width': _sw, 'height': _sh,
+                                'deviceScaleFactor': 3.0 if _profile_os == 'ios' else 2.625,
+                                'mobile': True,
+                            })
+                            await _cdp_sess.send('Emulation.setTouchEmulationEnabled', {'enabled': True})
+                            _log(f"[LOGIN] {email}: mobile mask → {_profile_os} {_sw}x{_sh}")
+                        elif _profile_os == 'windows':
+                            _WIN_PV_MAP = {'7': '0.1.0', '8': '0.3.0', '10': '10.0.0', '11': '15.0.0'}
+                            _win_num = _ov.get('os_version', 'Windows 11').replace('Windows ', '').strip()
+                            _win_pv  = _WIN_PV_MAP.get(_win_num, '15.0.0')
+                            _cur_ua  = await _cdp_page.evaluate('navigator.userAgent')
                             await _cdp_sess.send('Emulation.setUserAgentOverride', {
                                 'userAgent': _cur_ua,
                                 'userAgentMetadata': {
@@ -3923,8 +3956,8 @@ async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
                                 }
                             })
                             _log(f"[LOGIN] {email}: platform → Windows {_win_num} (pv={_win_pv})")
-                        except Exception as _pv_err:
-                            _log(f"[LOGIN] {email}: platform override skipped: {_pv_err}")
+                    except Exception as _pv_err:
+                        _log(f"[LOGIN] {email}: CDP override skipped: {_pv_err}")
                 else:
                     context, bridge, stealth = await _launch_profile_context(p, profile)
 
