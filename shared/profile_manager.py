@@ -3843,6 +3843,7 @@ async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
         'CAPTCHA', 'ACCOUNT_DISABLED', 'ACCOUNT_LOCKED', 'ACCOUNT_SUSPENDED',
         'PASSWORD_INCORRECT', 'TOTP_FAILED', 'CHALLENGE_UNRESOLVABLE',
         'ACCOUNT_RECOVERY_REDIRECT', 'VERIFICATION_REQUIRED', 'SIGNIN_REJECTED',
+        'PHONE_VERIFY_REQUIRED', 'PHONE_VERIFY_LOOP',
     )
 
     last_error = 'not started'
