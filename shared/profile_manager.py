@@ -1166,6 +1166,26 @@ def _batch_login_worker(accounts: list[dict], num_workers: int,
     results = []
     _lock_bl = threading.Lock()
 
+    # ── Shuffled-deck OS rotator ─────────────────────────────────────────
+    # Pure random.choice() can produce streaks (e.g. 5 windows in a row).
+    # We instead build a deck containing every OS the same number of times,
+    # shuffle it, and deal one per account. When the deck runs out we
+    # rebuild + re-shuffle. This guarantees every 5 consecutive profiles
+    # see all 5 OS types in random order.
+    import random as _rnd
+    _OS_DECK = ['windows', 'macos', 'linux', 'android', 'ios']
+    _os_deck_state: dict = {'deck': []}
+
+    def _next_os() -> str:
+        if os_type != 'random':
+            return os_type
+        with _lock_bl:
+            if not _os_deck_state['deck']:
+                deck = list(_OS_DECK)
+                _rnd.shuffle(deck)
+                _os_deck_state['deck'] = deck
+            return _os_deck_state['deck'].pop()
+
     def login_single(account: dict) -> dict:
         # Check shutdown before starting a new account
         if _shutdown_event.is_set():
@@ -1180,9 +1200,9 @@ def _batch_login_worker(accounts: list[dict], num_workers: int,
             _batch_login_progress['current_account'] = email
         _log(f"[BATCH] Creating profile for {email} (engine={engine}, os={os_type})...")
 
-        # Pick random OS per profile if 'random'
-        import random as _rnd
-        actual_os = os_type if os_type != 'random' else _rnd.choice(['windows', 'macos', 'linux', 'android', 'ios'])
+        # Pick OS via shuffled-deck rotator (guarantees each OS used proportionally)
+        actual_os = _next_os()
+        _log(f"[BATCH] {email}: picked OS={actual_os}")
 
         # ── Resolve proxy: Excel column first, then proxy pool ────────
         proxy_for_profile = account.get('proxy')  # from Excel "Proxy" column
