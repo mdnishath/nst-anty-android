@@ -705,10 +705,13 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
             raw_os = random.choice(['windows', 'macos', 'linux', 'android', 'ios'])
         _log(f"Random OS selected: {raw_os}")
 
-    # ── Auto-redirect mobile to NexusBrowser (NST API doesn't support Android/iOS) ──
-    if engine == 'nst' and raw_os in ('android', 'ios'):
-        _log(f"NST doesn't support {raw_os} — using NexusBrowser (local) with NST binary")
-        engine = 'nexus'
+    # NOTE: We used to auto-redirect android/ios to NexusBrowser (local)
+    # because NST has no mobile kernel. That bypassed the proxy via local
+    # Chromium and leaked the host IP. Instead, we now KEEP engine='nst'
+    # for mobile and host the profile on a windows kernel in NST cloud
+    # (so the proxy actually applies); the mobile look — UA, viewport,
+    # touch — is added at launch time via Playwright CDP overrides.
+    # See create flow below: is_mobile_nst forces platform='windows'.
 
     nst_error_msg = ''  # only set for NST engine failures
     _win_ver_num = None  # set for windows NST profiles — "7"/"8"/"10"/"11"
