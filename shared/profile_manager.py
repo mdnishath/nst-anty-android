@@ -1173,7 +1173,7 @@ def _batch_login_worker(accounts: list[dict], num_workers: int,
     # rebuild + re-shuffle. This guarantees every 5 consecutive profiles
     # see all 5 OS types in random order.
     import random as _rnd
-    _OS_DECK = ['windows', 'macos', 'linux', 'android', 'ios']
+    _OS_DECK = ['windows', 'macos', 'linux']
     _os_deck_state: dict = {'deck': []}
 
     def _next_os() -> str:

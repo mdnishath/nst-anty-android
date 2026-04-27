@@ -702,7 +702,7 @@ def create_profile(name: str, email: str = '', proxy: dict | None = None,
         if engine == 'nst':
             raw_os = random.choice(['windows', 'macos', 'linux'])
         else:
-            raw_os = random.choice(['windows', 'macos', 'linux', 'android', 'ios'])
+            raw_os = random.choice(['windows', 'macos', 'linux'])
         _log(f"Random OS selected: {raw_os}")
 
     # NOTE: We used to auto-redirect android/ios to NexusBrowser (local)

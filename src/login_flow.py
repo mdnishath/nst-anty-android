@@ -330,57 +330,33 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
         # STEP 1: Navigate to login URL (with retry on chrome-error://)
         # ============================================================
         _log(worker_id, "STEP[1/4] NAVIGATE: Loading login page...")
-        nav_attempts = 4
+        nav_attempts = 3
         for nav_attempt in range(1, nav_attempts + 1):
             try:
-                await page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
+                await page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
             except Exception as nav_err:
                 _log(worker_id, f"STEP[1/4] NAVIGATE: goto() raised: {nav_err}")
             nav_url = page.url
             _log(worker_id, f"STEP[1/4] NAVIGATE: Attempt {nav_attempt}/{nav_attempts} -> URL = {nav_url[:100]}")
-            if not _is_chrome_error(nav_url) and nav_url not in ('', 'about:blank'):
+            if not _is_chrome_error(nav_url):
                 break
-            wait_s = 7 + (nav_attempt - 1) * 3   # 7s, 10s, 13s between retries
-            _log(worker_id, f"STEP[1/4] NAVIGATE: Bad page — proxy may be slow. Waiting {wait_s}s then retrying...")
-            await asyncio.sleep(wait_s)
+            _log(worker_id, f"STEP[1/4] NAVIGATE: Chrome error page detected! Waiting 4s then retrying...")
+            await asyncio.sleep(4)
         else:
-            raise Exception("NETWORK_ERROR - Could not load Google login page after 4 attempts — proxy unreachable")
+            raise Exception("NETWORK_ERROR - Could not load Google login page after 3 attempts (chrome-error://)")
 
         try:
             title = await page.title()
             _log(worker_id, f"STEP[1/4] NAVIGATE: Page title = '{title}'")
         except Exception:
             pass
-        await asyncio.sleep(4)
-        _log(worker_id, f"STEP[1/4] NAVIGATE: After 4s wait. URL = {page.url[:100]}")
+        await asyncio.sleep(3)
+        _log(worker_id, f"STEP[1/4] NAVIGATE: After 3s wait. URL = {page.url[:100]}")
 
         # ============================================================
         # STEP 2: Enter email (MANDATORY) — with retry + pre-checks
         # ============================================================
         _log(worker_id, "STEP[2/4] EMAIL: Looking for email input field...")
-
-        # ── Page-ready guard (LIGHT) ──────────────────────────────────────
-        # User strategy: skip the pre-emptive reload (it wastes time when
-        # the page is fine). Just wait briefly for the email field to be
-        # visible — that's enough. The real stuck-detection happens AFTER
-        # email submit (2-3s window), where it's reliable and cheap.
-        async def _email_field_ready() -> bool:
-            for sel in ('#identifierId', 'input[type="email"]', 'input[name="identifier"]'):
-                try:
-                    el = page.locator(sel).first
-                    if await el.count() == 0:
-                        continue
-                    if await el.is_visible(timeout=400) and await el.is_enabled(timeout=400):
-                        return True
-                except Exception:
-                    continue
-            return False
-
-        for _i in range(10):
-            if await _email_field_ready():
-                break
-            await asyncio.sleep(0.6)
-        _log(worker_id, "STEP[2/4] EMAIL: field ready (or proceeding anyway)")
 
         # Pre-check: dismiss language prompt / cookie consent if present
         try:
@@ -416,23 +392,8 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                     count = await elem.count()
                     visible = await elem.is_visible() if count > 0 else False
                     if count > 0 and visible:
-                        # Real keyboard interaction — fires focus/input/keydown/keyup
-                        # events that Google's React form actually listens for. Pure
-                        # .fill() sets .value but skips many of those events, which
-                        # is why on a partially-hydrated page the Next button stays
-                        # broken even though the value looks right.
-                        try:
-                            await elem.click(timeout=3000)              # focus + activate listeners
-                        except Exception:
-                            pass
-                        try:
-                            await elem.fill('')                          # clear any residual value
-                        except Exception:
-                            pass
-                        # Type with a small per-char delay so each keystroke
-                        # fires its own input event — same as a real human.
-                        await page.keyboard.type(email, delay=25)
-                        _log(worker_id, f"STEP[2/4] EMAIL: Typed email via '{sel}' (attempt {email_attempt})")
+                        await elem.fill(email)
+                        _log(worker_id, f"STEP[2/4] EMAIL: Filled email via '{sel}' (attempt {email_attempt})")
                         email_filled = True
                         break
                 except Exception as e:
@@ -443,7 +404,7 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                 break
 
             if email_attempt < 3:
-                _log(worker_id, f"STEP[2/4] EMAIL: Attempt {email_attempt}/3 — field not found, checking for blockers (slow proxy?)...")
+                _log(worker_id, f"STEP[2/4] EMAIL: Attempt {email_attempt}/3 — field not found, checking for blockers...")
 
                 # Check for "Choose an account" page (already logged in)
                 choose_acct = False
@@ -493,8 +454,8 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                         except Exception:
                             continue
 
-                _log(worker_id, f"STEP[2/4] EMAIL: Waiting 6s before retry (proxy may be loading)...")
-                await asyncio.sleep(6)
+                _log(worker_id, f"STEP[2/4] EMAIL: Waiting 3s before retry...")
+                await asyncio.sleep(3)
                 _log(worker_id, f"STEP[2/4] EMAIL: URL = {page.url[:100]}")
 
         if not email_filled:
@@ -508,278 +469,12 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                 pass
             raise Exception("Could not enter email - input field not found")
 
-        # Submit via Enter — no pre-sleeps. Detection starts immediately
-        # so the 3-second stuck window starts ticking right after submit.
-        _email_next_sels = [
-            '#identifierNext', 'button[jsname="LgbsSe"]',
-            'button:has-text("Next")', 'button:has-text("Suivant")',
-            'button:has-text("Weiter")', 'button:has-text("Далее")',
-            'button[type="submit"]',
-        ]
-        try:
-            _log(worker_id, "STEP[2/4] EMAIL: Submitting via Enter key...")
-            await page.keyboard.press('Enter')
-        except Exception as _kerr:
-            _log(worker_id, f"STEP[2/4] EMAIL: Enter press failed: {_kerr}")
-            # Fallback to button click if Enter itself errored
-            for _sel in _email_next_sels:
-                try:
-                    _btn = page.locator(_sel).first
-                    if await _btn.is_visible(timeout=1500):
-                        await _btn.click()
-                        break
-                except Exception:
-                    continue
-
-        # ── Event-driven transition wait + auto-reload-and-retry ──────────
-        # Instead of a fixed 8s sleep + a separate recovery loop, poll
-        # every 500ms for ANY forward-progress signal (password field,
-        # URL change, captcha, error). If none arrives within the budget,
-        # the page is genuinely stuck — reload, re-type, re-submit.
-        # Repeat up to 3 times. This is the "robust solution" the user
-        # asked for: a worker can never sit on /identifier indefinitely.
-
-        async def _has_password_field() -> bool:
-            try:
-                return await page.locator(
-                    'input[type="password"], input[name="password"], input[name="Passwd"]'
-                ).first.is_visible(timeout=400)
-            except Exception:
-                return False
-
-        async def _has_forward_signal() -> bool:
-            """True if the page has moved past the email step in any way."""
-            cur = page.url
-            # URL changed to anything that isn't the identifier step
-            if '/identifier' not in cur:
-                return True
-            # Password / challenge / captcha visible → transition succeeded
-            if await _has_password_field():
-                return True
-            # CAPTCHA challenge that needs handling
-            try:
-                if await page.locator(
-                    'iframe[src*="recaptcha"], iframe[src*="captcha"], '
-                    '[id*="captcha"], [class*="captcha"]'
-                ).first.is_visible(timeout=300):
-                    return True
-            except Exception:
-                pass
-            # Error messages inline ("Couldn't find your Google Account", etc.)
-            try:
-                if await page.locator(
-                    'div[jsname][role="alert"], div[role="alert"]:has-text("Couldn"), '
-                    'div[role="alert"]:has-text("not find"), '
-                    'div[role="alert"]:has-text("introuvable")'
-                ).first.is_visible(timeout=300):
-                    return True
-            except Exception:
-                pass
-            return False
-
-        async def _wait_for_transition(budget_seconds: float) -> bool:
-            """Poll every 500ms; return True as soon as the page progresses,
-            False if budget exhausted with no progress."""
-            deadline = asyncio.get_event_loop().time() + budget_seconds
-            while asyncio.get_event_loop().time() < deadline:
-                if await _has_forward_signal():
-                    return True
-                await asyncio.sleep(0.5)
-            return False
-
-        # User-specified strategy: stuck detection in a TIGHT 3-second
-        # window. If the next screen (password / challenge / captcha /
-        # error) doesn't appear within 3s of pressing Enter, the page is
-        # definitely stuck — reload + retype email. This catches stuck
-        # workers fast instead of wasting 25s waiting hopelessly.
-        progressed = await _wait_for_transition(budget_seconds=3)
-
-        if not progressed:
-            _log(worker_id, "STEP[2/4] EMAIL: no transition in 3s — STUCK detected, reloading + retyping")
-
-        # Hard-recovery cycles. Each one:
-        #   1. window.stop() to kill any in-flight network requests
-        #   2. page.goto() to a CACHE-BUSTED login URL
-        #   3. wait for email field interactivity
-        #   4. real-keystroke retype + Enter
-        #   5. event-driven transition wait
-        # User said: "fail korbe na, reload dia abar email theke suru korbe".
-        # The loop runs until progress OR until the outer 600s hard
-        # timeout in _login_profile() bails out.
-        import time as _time
-        _stuck_attempt = 0
-        while not progressed:
-            _stuck_attempt += 1
-
-            _log(worker_id, f"STEP[2/4] EMAIL: hard recovery {_stuck_attempt} — stop + fresh goto + retype")
-
-            # Step 1: kill in-flight requests to clear stuck connection state
-            try:
-                await page.evaluate("() => { try { window.stop(); } catch(e) {} }")
-            except Exception:
-                pass
-
-            # Step 2: full fresh navigation with cache-buster — much more
-            # effective than page.reload() when the underlying network
-            # connection is wedged.
-            sep = '&' if '?' in login_url else '?'
-            fresh_url = f"{login_url}{sep}_nstr={_time.time_ns()}"
-            try:
-                await page.goto(fresh_url, wait_until='domcontentloaded', timeout=60000)
-            except Exception as _gerr:
-                _log(worker_id, f"STEP[2/4] EMAIL: goto error (continuing): {_gerr}")
-                # Last-ditch fallback to plain reload if goto failed
-                try:
-                    await page.reload(wait_until='domcontentloaded', timeout=45000)
-                except Exception:
-                    pass
-
-            # Wait for email field interactivity (longer budget — slow proxy)
-            _email_el = None
-            _email_sel = None
-            _deadline = asyncio.get_event_loop().time() + 25
-            while asyncio.get_event_loop().time() < _deadline and _email_el is None:
-                for _sel in ('input[type="email"]', 'input#identifierId',
-                             'input[name="identifier"]', 'input[autocomplete="username"]'):
-                    try:
-                        _el = page.locator(_sel).first
-                        if (await _el.count() > 0
-                                and await _el.is_visible(timeout=300)
-                                and await _el.is_enabled(timeout=300)):
-                            _email_el = _el
-                            _email_sel = _sel
-                            break
-                    except Exception:
-                        continue
-                if _email_el is None:
-                    await asyncio.sleep(0.5)
-
-            if _email_el is None:
-                _log(worker_id, "STEP[2/4] EMAIL: email field not interactive after reload — next attempt")
-                continue
-
-            # Re-type with real keystrokes
-            try:
-                await _email_el.click(timeout=3000)
-            except Exception:
-                pass
-            try:
-                await _email_el.fill('')
-            except Exception:
-                pass
-            try:
-                await page.keyboard.type(email, delay=25)
-            except Exception as _type_err:
-                _log(worker_id, f"STEP[2/4] EMAIL: re-type error: {_type_err}")
-                continue
-            _log(worker_id, f"STEP[2/4] EMAIL: re-typed email via '{_email_sel}' (attempt {_stuck_attempt})")
-
-            # Submit via Enter
-            try:
-                await page.keyboard.press('Enter')
-            except Exception:
-                for _sel in _email_next_sels:
-                    try:
-                        _btn = page.locator(_sel).first
-                        if await _btn.is_visible(timeout=2000):
-                            await _btn.click()
-                            break
-                    except Exception:
-                        continue
-
-            # Wait for transition again — same tight 3s budget per user spec
-            progressed = await _wait_for_transition(budget_seconds=3)
-            if progressed:
-                _log(worker_id, f"STEP[2/4] EMAIL: transitioned after recovery attempt {_stuck_attempt}")
-                break
-            _log(worker_id, f"STEP[2/4] EMAIL: still stuck after attempt {_stuck_attempt} — retrying")
-
-        # If we reach here, the loop exited because progressed=True.
-        # The only other way out is the outer hard timeout (asyncio cancels us).
-        _log(worker_id, f"STEP[2/4] EMAIL: progressed past identifier. URL = {page.url[:100]}")
-
-        # ── Post-email error classification ───────────────────────────────
-        # After progressing past the identifier step, check for two
-        # very different alerts:
-        #   1. "Couldn't find your Google Account" → account doesn't
-        #      exist → retrying won't help → fail FAST.
-        #   2. "Something went wrong" → transient Google-side error
-        #      (very common under high concurrency) → reload + retry,
-        #      DO NOT fail.
-        async def _alert_text() -> str:
-            for _alert_sel in [
-                'div[role="alert"]', 'div[jsname][role="alert"]',
-            ]:
-                try:
-                    el = page.locator(_alert_sel).first
-                    if await el.count() > 0 and await el.is_visible(timeout=300):
-                        t = (await el.inner_text()).strip()
-                        if t:
-                            return t
-                except Exception:
-                    continue
-            return ''
-
-        _alert = await _alert_text()
-        if _alert:
-            _alert_low = _alert.lower()
-            # 1. Account not found → fast fail
-            if any(p in _alert_low for p in (
-                "couldn't find", "couldn’t find", "could not find",
-                "not find your google", "compte google introuvable",
-                "couldn't find your google",
-            )):
-                _log(worker_id, f"STEP[2/4] EMAIL: account-not-found alert: {_alert[:120]}")
-                raise Exception("ACCOUNT_NOT_FOUND - Google says this email does not exist")
-
-            # 2. Generic "Something went wrong" → transient → reload + retry
-            if any(p in _alert_low for p in (
-                'something went wrong', 'try again later',
-                'an error occurred', 'une erreur s\'est produite',
-            )):
-                _log(worker_id, f"STEP[2/4] EMAIL: transient 'something went wrong' alert — reloading + retyping")
-                # Loop back into the recovery cycle by clearing progressed
-                progressed = False
-                # Inline single recovery cycle
-                try:
-                    await page.evaluate("() => { try { window.stop(); } catch(e) {} }")
-                except Exception:
-                    pass
-                _sep2 = '&' if '?' in login_url else '?'
-                _fresh = f"{login_url}{_sep2}_nstr={_time.time_ns()}"
-                try:
-                    await page.goto(_fresh, wait_until='domcontentloaded', timeout=60000)
-                except Exception:
-                    pass
-                # wait for field
-                _email_el = None
-                _deadline2 = asyncio.get_event_loop().time() + 25
-                while asyncio.get_event_loop().time() < _deadline2 and _email_el is None:
-                    for _sel in ('input[type="email"]', 'input#identifierId',
-                                 'input[name="identifier"]', 'input[autocomplete="username"]'):
-                        try:
-                            _el = page.locator(_sel).first
-                            if (await _el.count() > 0
-                                    and await _el.is_visible(timeout=300)
-                                    and await _el.is_enabled(timeout=300)):
-                                _email_el = _el
-                                break
-                        except Exception:
-                            continue
-                    if _email_el is None:
-                        await asyncio.sleep(0.5)
-                if _email_el is not None:
-                    try: await _email_el.click(timeout=3000)
-                    except Exception: pass
-                    try: await _email_el.fill('')
-                    except Exception: pass
-                    await page.keyboard.type(email, delay=25)
-                    await page.keyboard.press('Enter')
-                    progressed = await _wait_for_transition(budget_seconds=5)
-                if not progressed:
-                    # If still showing 'something went wrong' after reload,
-                    # let the outer hard timeout handle it — don't fail here.
-                    _log(worker_id, "STEP[2/4] EMAIL: 'something went wrong' persisted after reload — letting outer timeout handle")
+        await asyncio.sleep(1)
+        _log(worker_id, "STEP[2/4] EMAIL: Clicking Next button...")
+        await page.locator('button:has-text("Next")').first.click()
+        _log(worker_id, "STEP[2/4] EMAIL: Clicked Next. Waiting 4s...")
+        await asyncio.sleep(4)
+        _log(worker_id, f"STEP[2/4] EMAIL: After Next. URL = {page.url[:100]}")
 
         # POST-EMAIL: CAPTCHA check
         _log(worker_id, "STEP[2/4] EMAIL: Checking for post-email CAPTCHA...")
@@ -798,15 +493,17 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
             _log(worker_id, "STEP[2/4] EMAIL: Clicking 'Try another way' (NOT 'Continue')...")
             pk_clicked = False
             for pk_sel in [
-                '[jsname="Njthtb"]', '[jsname="PvB1Bd"]', '[jsname="EBHGs"]',
-                'button:has-text("Try another way")', 'button:has-text("Try another method")',
-                'button:has-text("Essayer une autre")',
-                'a:has-text("Try another way")', 'a:has-text("Essayer une autre")',
+                'button:has-text("Try another way")',
+                'a:has-text("Try another way")',
                 '[role="button"]:has-text("Try another way")',
                 'div[role="link"]:has-text("Try another way")',
-                'div[role="link"]:has-text("Essayer")',
-                'button:has-text("Not now")', 'button:has-text("Pas maintenant")',
-                'a:has-text("Not now")', 'a:has-text("Pas maintenant")',
+                # Google v3 passkey page: jsname-based selectors
+                '[jsname="Njthtb"]',
+                '[jsname="PvB1Bd"]',
+                # Fallback: text-based broader match
+                ':text("Try another way")',
+                'button:has-text("Not now")',
+                'a:has-text("Not now")',
             ]:
                 try:
                     pk_btn = page.locator(pk_sel).first
@@ -818,8 +515,8 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                 except Exception:
                     continue
             if pk_clicked:
-                _log(worker_id, "STEP[2/4] EMAIL: Waiting 6s after passkey skip (proxy latency)...")
-                await asyncio.sleep(6)
+                _log(worker_id, "STEP[2/4] EMAIL: Waiting 4s after passkey skip...")
+                await asyncio.sleep(4)
                 _log(worker_id, f"STEP[2/4] EMAIL: After passkey skip. URL = {page.url[:100]}")
 
                 # After "Try another way", Google may show a METHOD SELECTION page
@@ -834,15 +531,13 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                     pw_option_clicked = False
                     for pw_opt_sel in [
                         'li:has-text("Enter your password")',
-                        'li:has-text("mot de passe")',        # French
-                        'li:has-text("Passwort")',            # German
                         'div[role="link"]:has-text("Enter your password")',
-                        'div[role="link"]:has-text("mot de passe")',
                         '[data-challengetype]:has-text("Enter your password")',
-                        '[data-challengetype]:has-text("password")',
-                        '[data-challengetype]:has-text("mot de passe")',
+                        '[jsname="EBHGs"]:has-text("password")',
                         'li:has-text("password")',
                         'div[role="link"]:has-text("password")',
+                        # Also try clicking a password-related challenge type
+                        '[data-challengetype]:has-text("Password")',
                     ]:
                         try:
                             opt = page.locator(pw_opt_sel).first
@@ -854,8 +549,8 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
                         except Exception:
                             continue
                     if pw_option_clicked:
-                        _log(worker_id, "STEP[2/4] EMAIL: Waiting 6s for password page (proxy latency)...")
-                        await asyncio.sleep(6)
+                        _log(worker_id, "STEP[2/4] EMAIL: Waiting 4s for password page...")
+                        await asyncio.sleep(4)
                         _log(worker_id, f"STEP[2/4] EMAIL: After password option. URL = {page.url[:100]}")
                     else:
                         _log(worker_id, "STEP[2/4] EMAIL: WARNING - Could not find 'Enter your password' option")
@@ -865,110 +560,85 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
         # ============================================================
         # STEP 3: Enter password (MANDATORY)
         # ============================================================
-        # Smart wait: use wait_for on password field with proper timeout.
-        # Handle passkey/method-selection screens between attempts.
+        # Try up to 3 times with 3s waits — password field may take time
+        # to appear after passkey skip or method selection.
         _log(worker_id, "STEP[3/4] PASSWORD: Looking for password input field...")
         pwd_selectors = ['input[type="password"]', 'input[name="Passwd"]']
         pwd_filled = False
 
-        for pwd_attempt in range(1, 5):  # 4 attempts total
-            # First: try to wait for password field to appear (smart wait)
+        for pwd_attempt in range(1, 4):
             for sel in pwd_selectors:
                 try:
                     elem = page.locator(sel).first
-                    await elem.wait_for(state='visible', timeout=8000)  # 8s smart wait
-                    await elem.fill(password)
-                    _log(worker_id, f"STEP[3/4] PASSWORD: Filled password via '{sel}' (attempt {pwd_attempt})")
-                    pwd_filled = True
-                    break
-                except Exception:
+                    count = await elem.count()
+                    visible = await elem.is_visible() if count > 0 else False
+                    if count > 0 and visible:
+                        await elem.fill(password)
+                        _log(worker_id, f"STEP[3/4] PASSWORD: Filled password via '{sel}' (attempt {pwd_attempt})")
+                        pwd_filled = True
+                        break
+                except:
                     continue
             if pwd_filled:
                 break
 
-            # Password field not visible — check what screen we're on
-            mid_screen = await detector.detect_current_screen()
-            _log(worker_id, f"STEP[3/4] PASSWORD: Attempt {pwd_attempt}/4 — field not found, screen={mid_screen.name}, URL={page.url[:80]}")
+            if pwd_attempt < 3:
+                _log(worker_id, f"STEP[3/4] PASSWORD: Attempt {pwd_attempt}/3 — password field not found, waiting 3s...")
 
-            if mid_screen == LoginScreen.PASSKEY_PROMPT:
-                _log(worker_id, "STEP[3/4] PASSWORD: Passkey screen — clicking 'Try another way'...")
-                for pk_sel in [
-                    '[jsname="Njthtb"]', '[jsname="PvB1Bd"]', '[jsname="EBHGs"]',
-                    'button:has-text("Try another way")', 'button:has-text("Try another method")',
-                    'button:has-text("Essayer une autre")',
-                    'a:has-text("Try another way")', 'a:has-text("Essayer une autre")',
-                    'div[role="link"]:has-text("Try another way")',
-                    'div[role="link"]:has-text("Essayer")',
-                    'button:has-text("Not now")', 'button:has-text("Pas maintenant")',
-                    'a:has-text("Not now")', 'a:has-text("Pas maintenant")',
-                ]:
-                    try:
-                        pk_btn = page.locator(pk_sel).first
-                        if await pk_btn.count() > 0 and await pk_btn.is_visible():
-                            await pk_btn.click()
-                            _log(worker_id, f"STEP[3/4] PASSWORD: Clicked: {pk_sel}")
-                            await asyncio.sleep(5)  # wait for navigation after click
-                            break
-                    except Exception:
-                        continue
+                # On intermediate attempts, check for passkey/selection screens
+                mid_screen = await detector.detect_current_screen()
+                _log(worker_id, f"STEP[3/4] PASSWORD: Mid-check screen = {mid_screen.name}, URL = {page.url[:80]}")
 
-            elif mid_screen in (LoginScreen.ACCOUNT_RECOVERY, LoginScreen.TRY_ANOTHER_WAY):
-                _log(worker_id, "STEP[3/4] PASSWORD: Method selection page — clicking password option...")
-                for pw_opt in [
-                    'li:has-text("Enter your password")',
-                    'li:has-text("mot de passe")',
-                    'li:has-text("password")',
-                    'div[role="link"]:has-text("password")',
-                    'div[role="link"]:has-text("mot de passe")',
-                    '[data-challengetype]:has-text("password")',
-                    '[data-challengetype]:has-text("mot de passe")',
-                ]:
-                    try:
-                        opt = page.locator(pw_opt).first
-                        if await opt.count() > 0 and await opt.is_visible():
-                            await opt.click()
-                            _log(worker_id, f"STEP[3/4] PASSWORD: Clicked: {pw_opt}")
-                            await asyncio.sleep(5)  # wait for password page to load
-                            break
-                    except Exception:
-                        continue
+                if mid_screen == LoginScreen.PASSKEY_PROMPT:
+                    _log(worker_id, "STEP[3/4] PASSWORD: Still on passkey screen — clicking 'Try another way'...")
+                    for pk_sel in [
+                        'button:has-text("Try another way")',
+                        'a:has-text("Try another way")',
+                        '[role="button"]:has-text("Try another way")',
+                        'div[role="link"]:has-text("Try another way")',
+                        '[jsname="Njthtb"]',
+                        '[jsname="PvB1Bd"]',
+                        ':text("Try another way")',
+                        'button:has-text("Not now")',
+                        'a:has-text("Not now")',
+                    ]:
+                        try:
+                            pk_btn = page.locator(pk_sel).first
+                            if await pk_btn.count() > 0 and await pk_btn.is_visible():
+                                await pk_btn.click()
+                                _log(worker_id, f"STEP[3/4] PASSWORD: Clicked: {pk_sel}")
+                                break
+                        except Exception:
+                            continue
 
-            elif mid_screen == LoginScreen.PASSWORD_INPUT:
-                # Screen says password but field wasn't found — give more time
-                _log(worker_id, "STEP[3/4] PASSWORD: On password page but field not ready, waiting 5s...")
-                await asyncio.sleep(5)
+                elif mid_screen in (LoginScreen.ACCOUNT_RECOVERY, LoginScreen.TRY_ANOTHER_WAY):
+                    _log(worker_id, "STEP[3/4] PASSWORD: On selection page — clicking password option...")
+                    for pw_opt in [
+                        'li:has-text("Enter your password")',
+                        'li:has-text("password")',
+                        'div[role="link"]:has-text("password")',
+                        '[data-challengetype]:has-text("password")',
+                        '[jsname="EBHGs"]:has-text("password")',
+                    ]:
+                        try:
+                            opt = page.locator(pw_opt).first
+                            if await opt.count() > 0 and await opt.is_visible():
+                                await opt.click()
+                                _log(worker_id, f"STEP[3/4] PASSWORD: Clicked: {pw_opt}")
+                                break
+                        except Exception:
+                            continue
 
-            else:
-                # Unknown screen — wait and retry
-                _log(worker_id, f"STEP[3/4] PASSWORD: Unexpected screen, waiting 5s...")
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
 
         if not pwd_filled:
-            _log(worker_id, "STEP[3/4] PASSWORD: FAILED - Could not find password input after 4 attempts!")
+            _log(worker_id, "STEP[3/4] PASSWORD: FAILED - Could not find password input after 3 attempts!")
             _log(worker_id, f"STEP[3/4] PASSWORD: Final URL = {page.url[:100]}")
             raise Exception("Could not enter password - input field not found")
 
         await asyncio.sleep(1)
         _log(worker_id, "STEP[3/4] PASSWORD: Clicking Next button...")
-        # Use #passwordNext (language-independent) with text fallback
-        _pwd_next_sels = [
-            '#passwordNext', 'button[jsname="LgbsSe"]',
-            'button:has-text("Next")', 'button:has-text("Suivant")',
-            'button:has-text("Weiter")', 'button:has-text("Далее")',
-            'button[type="submit"]',
-        ]
-        _clicked_pwd_next = False
-        for _sel in _pwd_next_sels:
-            try:
-                _btn = page.locator(_sel).first
-                if await _btn.is_visible(timeout=2000):
-                    await _btn.click()
-                    _clicked_pwd_next = True
-                    break
-            except Exception:
-                continue
-        if not _clicked_pwd_next:
-            await page.locator('#passwordNext, button[type="submit"]').first.click(timeout=5000)
+        await page.locator('button:has-text("Next")').first.click()
         _log(worker_id, "STEP[3/4] PASSWORD: Clicked Next. Waiting 5s...")
         await asyncio.sleep(5)
         _log(worker_id, f"STEP[3/4] PASSWORD: After Next. URL = {page.url[:100]}")

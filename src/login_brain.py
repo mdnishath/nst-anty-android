@@ -76,25 +76,17 @@ RECOVERY_PHONE_SELECTORS = [
 ]
 
 NEXT_BUTTON_SELECTORS = [
-    '#identifierNext', '#passwordNext',
+    'button:has-text("Next")', 'button:has-text("Verify")',
     'button[jsname="LgbsSe"]', 'button[type="submit"]',
-    'button:has-text("Next")', 'button:has-text("Suivant")',
-    'button:has-text("Weiter")', 'button:has-text("Далее")',
-    'button:has-text("Verify")',
+    '#identifierNext', '#passwordNext',
 ]
 
 PASSKEY_SKIP_SELECTORS = [
     'button:has-text("Try another way")',
-    'button:has-text("Try another method")',
-    'button:has-text("Essayer une autre")',       # French
-    '[jsname="EBHGs"]',                           # Google internal jsname
     'a:has-text("Try another way")',
-    'a:has-text("Essayer une autre")',
     '[role="button"]:has-text("Try another way")',
     'button:has-text("Not now")',
-    'button:has-text("Pas maintenant")',           # French
     'a:has-text("Not now")',
-    'a:has-text("Pas maintenant")',
     '[role="button"]:has-text("Not now")',
 ]
 
@@ -464,42 +456,105 @@ class LoginBrain:
         return HandlerResult.fail("DEVICE_SECURITY_CODE - Google requires phone Settings security code. Cannot bypass.")
 
     async def _handle_sms_verification(self) -> HandlerResult:
-        """SMS / phone "Verify it's you" challenge.
+        await self._log("SMS_VERIFICATION — attempting to send SMS and read code...")
 
-        Phone-based verification is impossible for our profile set, so
-        we DO NOT fill the phone number and DO NOT wait for SMS codes.
-        Instead we click "Try another way" / "I don't have my phone"
-        immediately and let the next screen take over (TOTP, backup
-        codes, recovery email, etc.).
+        CODE_INPUT_SELECTORS = [
+            'input[name="Pin"]',
+            'input[aria-label*="Enter code" i]',
+            'input[aria-label*="code" i]',
+            'input[type="tel"][pattern="[0-9 ]*"]',
+            'input[type="tel"]',
+        ]
+        PHONE_INPUT_SELECTORS = [
+            'input[type="tel"]',
+            'input[aria-label*="Phone number" i]',
+            'input[aria-label*="phone" i]',
+        ]
+        SEND_BUTTON_SELECTORS = [
+            'button:has-text("Send")',
+            '[jsname="LgbsSe"]:has-text("Send")',
+            'button:has-text("send")',
+            'button[type="submit"]',
+        ]
 
-        If we hit this screen twice in a row (loop), we fail fast so
-        the worker doesn't hang.
-        """
-        # Track attempts to break out of phone-verify loop
-        attempts = getattr(self, '_sms_skip_attempts', 0) + 1
-        self._sms_skip_attempts = attempts
+        # ── SCENARIO A: Check if there's a code input ALREADY visible ──
+        # (Google already sent the code — just need to fill it)
+        code_input_visible = False
+        for sel in CODE_INPUT_SELECTORS[:3]:  # check specific code inputs first
+            try:
+                el = self.page.locator(sel).first
+                if await el.count() > 0 and await el.is_visible():
+                    # Make sure it's a code input, not phone input
+                    placeholder = await el.get_attribute('placeholder') or ''
+                    aria = await el.get_attribute('aria-label') or ''
+                    name = await el.get_attribute('name') or ''
+                    if 'pin' in name.lower() or 'code' in placeholder.lower() or 'code' in aria.lower():
+                        code_input_visible = True
+                        break
+            except Exception:
+                continue
 
-        if attempts > 2:
-            await self._log("SMS_VERIFICATION — loop detected (3rd hit) — failing")
-            return HandlerResult.fail(
-                "PHONE_VERIFY_LOOP - Google keeps requesting phone verification "
-                "and no alternative method is available for this account."
-            )
+        if code_input_visible:
+            await self._log("Code input already visible — checking for existing SMS code...")
+            code = await self._wait_for_sms_code(timeout=60)
+            if code:
+                await self._log("SMS code received, entering...")
+                code_filled = await self._fill_input(CODE_INPUT_SELECTORS, code)
+                if code_filled:
+                    await self._click_next()
+                    await self._wait(3)
+                    return HandlerResult.cont()
+                await self._log("Could not fill code input!")
+            else:
+                await self._log("No SMS code received within 60s.")
 
-        await self._log(f"SMS_VERIFICATION (attempt {attempts}) — phone verify is "
-                        f"unavailable, clicking 'Try another way' to skip...")
+        # ── SCENARIO B: Phone number input visible → fill + Send ──
+        recovery_phone = self._cred('recovery_phone')
+        if recovery_phone:
+            phone_filled = await self._fill_input(PHONE_INPUT_SELECTORS, recovery_phone)
+            if phone_filled:
+                await self._log(f"Phone number filled: ...{recovery_phone[-4:]}")
+                send_clicked = await self._click_any(SEND_BUTTON_SELECTORS)
+                if not send_clicked:
+                    # Try Next button as fallback
+                    await self._log("No Send button — trying Next...")
+                    await self._click_next()
+                await self._wait(3)
+                await self._log("SMS triggered — waiting for code from phone app...")
+                code = await self._wait_for_sms_code(timeout=60)
+                if code:
+                    await self._log("SMS code received, entering...")
+                    code_filled = await self._fill_input(CODE_INPUT_SELECTORS, code)
+                    if code_filled:
+                        await self._click_next()
+                        await self._wait(3)
+                        return HandlerResult.cont()
+                    await self._log("Could not fill code input after phone!")
+                else:
+                    await self._log("No SMS code received after sending.")
+
+        # ── SCENARIO C: No phone input, no code input — maybe just a Send button ──
+        if not code_input_visible:
+            await self._log("Trying to click Send button directly (Google may know the phone)...")
+            send_clicked = await self._click_any(SEND_BUTTON_SELECTORS)
+            if send_clicked:
+                await self._wait(3)
+                code = await self._wait_for_sms_code(timeout=60)
+                if code:
+                    await self._log("SMS code received, entering...")
+                    code_filled = await self._fill_input(CODE_INPUT_SELECTORS, code)
+                    if code_filled:
+                        await self._click_next()
+                        await self._wait(3)
+                        return HandlerResult.cont()
+
+        # Fallback: mark as tried and try bypass
         self.tried_2fa_options.add('sms_verification')
-
+        await self._log("SMS_VERIFICATION — all scenarios failed, falling back to bypass...")
         if await self._try_bypass():
             await self._wait(3)
             return HandlerResult.cont()
-
-        # Bypass link not present → this account has no other 2FA method
-        await self._log("SMS_VERIFICATION — no 'Try another way' link found, account is phone-only")
-        return HandlerResult.fail(
-            "PHONE_VERIFY_REQUIRED - Google requires phone verification "
-            "and offers no other method for this account."
-        )
+        return HandlerResult.fail("SMS_VERIFICATION - Could not send/receive SMS code and no bypass available.")
 
     # ─── Success screen handlers ────────────────────────────────────
 
@@ -947,37 +1002,39 @@ class LoginBrain:
         return HandlerResult.cont()
 
     async def _handle_confirm_recovery_phone(self) -> HandlerResult:
-        """'Confirm your recovery phone' challenge.
-
-        Phone-based verification is unavailable for our profile set, so
-        we skip it immediately via 'Try another way' instead of trying
-        to fill the masked phone number. Loop-protected so we never sit
-        on this screen waiting for a phone we can't supply.
-        """
-        attempts = getattr(self, '_recovery_phone_skip_attempts', 0) + 1
-        self._recovery_phone_skip_attempts = attempts
-
-        if attempts > 2:
-            await self._log("CONFIRM_RECOVERY_PHONE — loop detected (3rd hit) — failing")
-            return HandlerResult.fail(
-                "PHONE_VERIFY_LOOP - 'Confirm your recovery phone' keeps "
-                "appearing and no alternative method is available."
-            )
-
-        await self._log(f"CONFIRM_RECOVERY_PHONE (attempt {attempts}) — phone "
-                        f"verify unavailable, clicking 'Try another way'...")
-        self.tried_2fa_options.add('recovery_phone')
-        self.recovery_phone_tried = True
-
-        if await self._try_bypass():
+        # Guard: only try once — same value won't magically become correct
+        if self.recovery_phone_tried:
+            await self._log("Recovery phone already tried & failed → Try another way...")
+            self.tried_2fa_options.add('recovery_phone')
+            await self._try_bypass()
             await self._wait(3)
             return HandlerResult.cont()
 
-        await self._log("CONFIRM_RECOVERY_PHONE — no bypass link found, account is phone-only")
-        return HandlerResult.fail(
-            "PHONE_VERIFY_REQUIRED - Account requires phone verification "
-            "and offers no alternative method."
-        )
+        recovery_phone = self._cred('recovery_phone')
+
+        if recovery_phone:
+            self.recovery_phone_tried = True
+            await self._log(f"Filling recovery phone: ...{recovery_phone[-4:]}")
+            filled = await self._fill_input(RECOVERY_PHONE_SELECTORS, recovery_phone)
+            if filled:
+                await self._wait(1)
+                await self._click_next()
+                await self._wait(5)
+                post = await self.detector.detect_current_screen()
+                if post != LoginScreen.CONFIRM_RECOVERY_PHONE:
+                    await self._log("Recovery phone accepted!")
+                    return HandlerResult.cont()
+                else:
+                    await self._log("Recovery phone REJECTED — won't retry same value")
+                    self.tried_2fa_options.add('recovery_phone')
+
+        # No phone provided or rejected → bypass
+        await self._log("Fallback → Try another way...")
+        self.recovery_phone_tried = True
+        self.tried_2fa_options.add('recovery_phone')
+        await self._try_bypass()
+        await self._wait(3)
+        return HandlerResult.cont()
 
     # ─── Post-login optional screens ────────────────────────────────
 
@@ -1035,11 +1092,10 @@ class LoginBrain:
         if filled:
             await self._log("Clicking Next/Save after recovery info...")
             save_sels = [
-                '#identifierNext', '#passwordNext',
-                'button[jsname="LgbsSe"]', 'button[type="submit"]',
-                'button:has-text("Next")', 'button:has-text("Suivant")',
-                'button:has-text("Save")', 'button:has-text("Done")',
-                'button:has-text("Continue")', 'button:has-text("Update")',
+                'button:has-text("Next")', 'button:has-text("Save")',
+                'button:has-text("Done")', 'button[jsname="LgbsSe"]',
+                'button[type="submit"]', 'button:has-text("Continue")',
+                'button:has-text("Update")',
             ]
             await self._click_button(save_sels)
             await self._wait(3)
@@ -1058,8 +1114,7 @@ class LoginBrain:
         except Exception:
             # Fallback: try clicking OK/Continue/Done buttons
             for sel in ['button:has-text("OK")', 'button:has-text("Continue")',
-                        'button:has-text("Done")', 'button:has-text("Next")',
-                        'button:has-text("Suivant")', 'button[type="submit"]']:
+                        'button:has-text("Done")', 'button:has-text("Next")']:
                 try:
                     btn = self.page.locator(sel).first
                     if await btn.count() > 0 and await btn.is_visible():
@@ -1124,10 +1179,9 @@ class LoginBrain:
             if filled >= 2:
                 await self._wait(1)
                 save_btns = [
+                    'button:has-text("Next")', 'button:has-text("Save password")',
+                    'button:has-text("Save")', 'button:has-text("Change password")',
                     'button[jsname="LgbsSe"]', 'button[type="submit"]',
-                    'button:has-text("Next")', 'button:has-text("Suivant")',
-                    'button:has-text("Save password")', 'button:has-text("Save")',
-                    'button:has-text("Change password")',
                 ]
                 await self._click_button(save_btns)
                 await self._wait(5)
@@ -1157,9 +1211,8 @@ class LoginBrain:
                         await elem.type(password, delay=80)
                         await self._log(f"Password re-entered via '{sel}'")
 
-                        btn_sels = ['#passwordNext', 'button[jsname="LgbsSe"]',
-                                    'button[type="submit"]', 'button:has-text("Next")',
-                                    'button:has-text("Suivant")']
+                        btn_sels = ['button:has-text("Next")', '#passwordNext',
+                                    'button[jsname="LgbsSe"]', 'button[type="submit"]']
                         clicked = await self._click_button(btn_sels)
                         if not clicked:
                             await self.page.keyboard.press("Enter")

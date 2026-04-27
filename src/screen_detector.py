@@ -629,12 +629,11 @@ class ScreenDetector:
             True if clicked successfully
         """
         next_selectors = [
-            '#identifierNext',             # Email page Next button id
-            '#passwordNext',               # Password page Next button id
             '[jsname="LgbsSe"]',           # Google's main Next button jsname
             'button[type="submit"]',
-            'button:has-text("Next")', 'button:has-text("Suivant")',
-            'button:has-text("Weiter")', 'button:has-text("Далее")',
+            '#identifierNext',             # Email page Next button id
+            '#passwordNext',               # Password page Next button id
+            'button:has-text("Next")',
             '[role="button"]:has-text("Next")',
         ]
 
@@ -671,18 +670,12 @@ class ScreenDetector:
 
         selectors = [
             'button:has-text("Try another way")',
-            'button:has-text("Try another method")',
-            'button:has-text("Essayer une autre")',   # French
-            'button:has-text("Andere Methode")',      # German
-            '[jsname="EBHGs"]',                       # Google internal jsname
-            '[jsname="PvB1Bd"]',
+            '[jsname="EBHGs"]:has-text("Try another way")',
             'a:has-text("Try another way")',
-            'a:has-text("Essayer une autre")',
             '[role="button"]:has-text("Try another way")',
-            '[role="button"]:has-text("Essayer une autre")',
             # Selection page: "Try another way to sign in" is div[role="link"]
             'div[role="link"]:has-text("Try another way")',
-            'div[role="link"]:has-text("Essayer")',
+            '[jsname="PvB1Bd"]',
             # "More ways to verify" button (Google ops re-auth pages)
             'button:has-text("More ways to verify")',
             'span:has-text("More ways to verify")',
@@ -913,9 +906,7 @@ class ScreenDetector:
             except Exception:
                 continue
         # Fallback
-        for fb in ['#identifierNext', '#passwordNext', 'button[type="submit"]',
-                   'button:has-text("Next")', 'button:has-text("Suivant")',
-                   'button:has-text("Continue")', 'button:has-text("Confirm")']:
+        for fb in ['button:has-text("Next")', 'button:has-text("Continue")', 'button:has-text("Confirm")']:
             try:
                 elem = self.page.locator(fb).first
                 if await elem.count() > 0 and await elem.is_visible():
