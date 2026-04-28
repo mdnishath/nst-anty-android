@@ -3847,27 +3847,11 @@ async def _login_profile(profile_id: str, profile: dict, account: dict):
 async def _login_profile_impl(profile_id: str, profile: dict, account: dict):
     """Single-attempt login implementation (no retries — caller wraps with timeout).
 
-    Workers spawned simultaneously hit Google + the proxy at the same
-    instant, which is exactly the load pattern that produces stuck
-    /identifier pages. We stagger each worker's actual start by giving
-    them a slot from a global counter (every Nth worker waits N×4s).
-    Combined with a small random jitter this gives ~0-40s spread for
-    a 10-worker batch — plenty of breathing room for the proxy.
+    No internal stagger here — the caller controls spacing via the
+    "Stagger Delay" knob on the Batch Login modal. Per user request:
+    a single login starts immediately, and parallel workers respect
+    only the user-configured delay (default 0).
     """
-    import random as _r
-    # Atomic slot allocation across all concurrent _login_profile_impl calls
-    global _login_stagger_counter, _login_stagger_lock
-    if '_login_stagger_lock' not in globals():
-        _login_stagger_lock = threading.Lock()
-        _login_stagger_counter = 0
-    with _login_stagger_lock:
-        slot = _login_stagger_counter % 12      # cap so 50th worker doesn't wait 200s
-        _login_stagger_counter += 1
-    _stagger = slot * 3.5 + _r.uniform(0.0, 1.5)
-    if _stagger > 0.05:
-        email = account.get('email', '?')
-        _log(f"[LOGIN] {email}: stagger sleep {_stagger:.1f}s (slot {slot})")
-        await asyncio.sleep(_stagger)
     from playwright.async_api import async_playwright
     from src.screen_detector import ScreenDetector
     from src.utils import TOTPGenerator, ConfigManager
