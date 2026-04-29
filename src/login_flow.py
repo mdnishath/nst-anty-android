@@ -476,6 +476,61 @@ async def execute_login_flow(page, account, worker_id, login_url, detector=None,
         await asyncio.sleep(4)
         _log(worker_id, f"STEP[2/4] EMAIL: After Next. URL = {page.url[:100]}")
 
+        # ── ONE-TIME stuck recovery ───────────────────────────────────────
+        # User policy: if the page is still on /identifier and no password
+        # field is showing 4s after Next, do ONE reload + retype + Enter,
+        # then let the normal flow take over. No second reload — anything
+        # still stuck after that goes through the regular screen handlers.
+        try:
+            _stuck = '/identifier' in page.url
+            if _stuck:
+                _has_pw = False
+                try:
+                    _has_pw = await page.locator(
+                        'input[type="password"], input[name="password"], input[name="Passwd"]'
+                    ).first.is_visible(timeout=800)
+                except Exception:
+                    _has_pw = False
+
+                if not _has_pw:
+                    _log(worker_id, "STEP[2/4] EMAIL: page still on /identifier — single reload + retype")
+                    try:
+                        await page.reload(wait_until='domcontentloaded', timeout=45000)
+                    except Exception as _rl_err:
+                        _log(worker_id, f"STEP[2/4] EMAIL: reload error (continuing): {_rl_err}")
+                    await asyncio.sleep(3)
+
+                    _refilled = False
+                    for _sel in ('input[type="email"]', 'input#identifierId',
+                                 'input[name="identifier"]', 'input[autocomplete="username"]'):
+                        try:
+                            _el = page.locator(_sel).first
+                            if (await _el.count() > 0
+                                    and await _el.is_visible(timeout=2000)
+                                    and await _el.is_enabled(timeout=1000)):
+                                try: await _el.click(timeout=2000)
+                                except Exception: pass
+                                try: await _el.fill('')
+                                except Exception: pass
+                                await page.keyboard.type(email, delay=25)
+                                _refilled = True
+                                break
+                        except Exception:
+                            continue
+
+                    if _refilled:
+                        try:
+                            await page.keyboard.press('Enter')
+                        except Exception:
+                            try:
+                                await page.locator('button:has-text("Next")').first.click()
+                            except Exception:
+                                pass
+                        await asyncio.sleep(4)
+                        _log(worker_id, f"STEP[2/4] EMAIL: After reload+retype. URL = {page.url[:100]}")
+        except Exception as _rec_err:
+            _log(worker_id, f"STEP[2/4] EMAIL: stuck-recovery non-fatal: {_rec_err}")
+
         # POST-EMAIL: CAPTCHA check
         _log(worker_id, "STEP[2/4] EMAIL: Checking for post-email CAPTCHA...")
         if await _check_captcha_screen(page, worker_id):

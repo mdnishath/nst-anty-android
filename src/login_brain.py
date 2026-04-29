@@ -456,105 +456,23 @@ class LoginBrain:
         return HandlerResult.fail("DEVICE_SECURITY_CODE - Google requires phone Settings security code. Cannot bypass.")
 
     async def _handle_sms_verification(self) -> HandlerResult:
-        await self._log("SMS_VERIFICATION — attempting to send SMS and read code...")
+        """Phone-verify screen.
 
-        CODE_INPUT_SELECTORS = [
-            'input[name="Pin"]',
-            'input[aria-label*="Enter code" i]',
-            'input[aria-label*="code" i]',
-            'input[type="tel"][pattern="[0-9 ]*"]',
-            'input[type="tel"]',
-        ]
-        PHONE_INPUT_SELECTORS = [
-            'input[type="tel"]',
-            'input[aria-label*="Phone number" i]',
-            'input[aria-label*="phone" i]',
-        ]
-        SEND_BUTTON_SELECTORS = [
-            'button:has-text("Send")',
-            '[jsname="LgbsSe"]:has-text("Send")',
-            'button:has-text("send")',
-            'button[type="submit"]',
-        ]
-
-        # ── SCENARIO A: Check if there's a code input ALREADY visible ──
-        # (Google already sent the code — just need to fill it)
-        code_input_visible = False
-        for sel in CODE_INPUT_SELECTORS[:3]:  # check specific code inputs first
-            try:
-                el = self.page.locator(sel).first
-                if await el.count() > 0 and await el.is_visible():
-                    # Make sure it's a code input, not phone input
-                    placeholder = await el.get_attribute('placeholder') or ''
-                    aria = await el.get_attribute('aria-label') or ''
-                    name = await el.get_attribute('name') or ''
-                    if 'pin' in name.lower() or 'code' in placeholder.lower() or 'code' in aria.lower():
-                        code_input_visible = True
-                        break
-            except Exception:
-                continue
-
-        if code_input_visible:
-            await self._log("Code input already visible — checking for existing SMS code...")
-            code = await self._wait_for_sms_code(timeout=60)
-            if code:
-                await self._log("SMS code received, entering...")
-                code_filled = await self._fill_input(CODE_INPUT_SELECTORS, code)
-                if code_filled:
-                    await self._click_next()
-                    await self._wait(3)
-                    return HandlerResult.cont()
-                await self._log("Could not fill code input!")
-            else:
-                await self._log("No SMS code received within 60s.")
-
-        # ── SCENARIO B: Phone number input visible → fill + Send ──
-        recovery_phone = self._cred('recovery_phone')
-        if recovery_phone:
-            phone_filled = await self._fill_input(PHONE_INPUT_SELECTORS, recovery_phone)
-            if phone_filled:
-                await self._log(f"Phone number filled: ...{recovery_phone[-4:]}")
-                send_clicked = await self._click_any(SEND_BUTTON_SELECTORS)
-                if not send_clicked:
-                    # Try Next button as fallback
-                    await self._log("No Send button — trying Next...")
-                    await self._click_next()
-                await self._wait(3)
-                await self._log("SMS triggered — waiting for code from phone app...")
-                code = await self._wait_for_sms_code(timeout=60)
-                if code:
-                    await self._log("SMS code received, entering...")
-                    code_filled = await self._fill_input(CODE_INPUT_SELECTORS, code)
-                    if code_filled:
-                        await self._click_next()
-                        await self._wait(3)
-                        return HandlerResult.cont()
-                    await self._log("Could not fill code input after phone!")
-                else:
-                    await self._log("No SMS code received after sending.")
-
-        # ── SCENARIO C: No phone input, no code input — maybe just a Send button ──
-        if not code_input_visible:
-            await self._log("Trying to click Send button directly (Google may know the phone)...")
-            send_clicked = await self._click_any(SEND_BUTTON_SELECTORS)
-            if send_clicked:
-                await self._wait(3)
-                code = await self._wait_for_sms_code(timeout=60)
-                if code:
-                    await self._log("SMS code received, entering...")
-                    code_filled = await self._fill_input(CODE_INPUT_SELECTORS, code)
-                    if code_filled:
-                        await self._click_next()
-                        await self._wait(3)
-                        return HandlerResult.cont()
-
-        # Fallback: mark as tried and try bypass
+        User policy: phone verification is impossible for our profile
+        set, so any time Google shows a phone-input we fail fast. We
+        first try clicking 'Try another way' once in case TOTP/backup
+        codes are also offered; if there's no bypass link, we fail.
+        """
+        await self._log("SMS_VERIFICATION — phone verify unavailable, trying 'Try another way' once...")
         self.tried_2fa_options.add('sms_verification')
-        await self._log("SMS_VERIFICATION — all scenarios failed, falling back to bypass...")
         if await self._try_bypass():
             await self._wait(3)
             return HandlerResult.cont()
-        return HandlerResult.fail("SMS_VERIFICATION - Could not send/receive SMS code and no bypass available.")
+        await self._log("SMS_VERIFICATION — no bypass link, failing immediately")
+        return HandlerResult.fail(
+            "PHONE_VERIFY_REQUIRED - Google requires phone verification "
+            "and offers no other method for this account."
+        )
 
     # ─── Success screen handlers ────────────────────────────────────
 
@@ -1002,39 +920,19 @@ class LoginBrain:
         return HandlerResult.cont()
 
     async def _handle_confirm_recovery_phone(self) -> HandlerResult:
-        # Guard: only try once — same value won't magically become correct
-        if self.recovery_phone_tried:
-            await self._log("Recovery phone already tried & failed → Try another way...")
-            self.tried_2fa_options.add('recovery_phone')
-            await self._try_bypass()
-            await self._wait(3)
-            return HandlerResult.cont()
-
-        recovery_phone = self._cred('recovery_phone')
-
-        if recovery_phone:
-            self.recovery_phone_tried = True
-            await self._log(f"Filling recovery phone: ...{recovery_phone[-4:]}")
-            filled = await self._fill_input(RECOVERY_PHONE_SELECTORS, recovery_phone)
-            if filled:
-                await self._wait(1)
-                await self._click_next()
-                await self._wait(5)
-                post = await self.detector.detect_current_screen()
-                if post != LoginScreen.CONFIRM_RECOVERY_PHONE:
-                    await self._log("Recovery phone accepted!")
-                    return HandlerResult.cont()
-                else:
-                    await self._log("Recovery phone REJECTED — won't retry same value")
-                    self.tried_2fa_options.add('recovery_phone')
-
-        # No phone provided or rejected → bypass
-        await self._log("Fallback → Try another way...")
+        """User policy: phone verify unavailable. Try 'Try another way'
+        once; if no bypass link, fail immediately."""
+        await self._log("CONFIRM_RECOVERY_PHONE — phone verify unavailable, trying 'Try another way' once...")
         self.recovery_phone_tried = True
         self.tried_2fa_options.add('recovery_phone')
-        await self._try_bypass()
-        await self._wait(3)
-        return HandlerResult.cont()
+        if await self._try_bypass():
+            await self._wait(3)
+            return HandlerResult.cont()
+        await self._log("CONFIRM_RECOVERY_PHONE — no bypass link, failing immediately")
+        return HandlerResult.fail(
+            "PHONE_VERIFY_REQUIRED - Account requires phone verification "
+            "and offers no alternative method."
+        )
 
     # ─── Post-login optional screens ────────────────────────────────
 
