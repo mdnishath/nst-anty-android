@@ -2402,6 +2402,32 @@ def profiles_cleanup():
     return jsonify({'success': True, **result})
 
 
+# ── Live Status Check (GMB review URLs) ──────────────────────────────────────
+from shared import live_status_check as _live_check
+
+
+@app.route('/api/profiles/live-check/start', methods=['POST'])
+def profiles_live_check_start():
+    body = request.get_json(silent=True) or {}
+    file_path = (body.get('file_path') or '').strip()
+    workers = int(body.get('workers') or 5)
+    timeout = int(body.get('timeout_sec') or 20)
+    if not file_path:
+        return jsonify({'success': False, 'message': 'file_path is required'}), 400
+    return jsonify(_live_check.start(file_path, workers, timeout, RESOURCES_PATH))
+
+
+@app.route('/api/profiles/live-check/status', methods=['GET'])
+def profiles_live_check_status():
+    return jsonify(_live_check.get_status())
+
+
+@app.route('/api/profiles/live-check/cancel', methods=['POST'])
+def profiles_live_check_cancel():
+    _live_check.cancel()
+    return jsonify({'success': True})
+
+
 # ── Profile Drive Backup / Restore ───────────────────────────────────────────
 from shared import drive_backup as _drive_backup
 try:

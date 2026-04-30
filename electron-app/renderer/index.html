@@ -606,6 +606,7 @@
                         <button class="btn btn-secondary" id="profileHealthBtn"><i class="fas fa-heartbeat"></i> Health</button>
                         <button class="btn btn-secondary" id="profileWriteReviewBtn"><i class="fas fa-star"></i> Write Review</button>
                         <button class="btn btn-secondary" id="profileGmbToReviewBtn"><i class="fas fa-link"></i> GMB Review URL</button>
+                        <button class="btn btn-secondary" id="profileLiveCheckBtn"><i class="fas fa-satellite-dish"></i> Live Status Check</button>
                     </div>
                 </div>
 
@@ -867,6 +868,44 @@
                 <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
                     <button class="btn btn-secondary" id="batchLoginCloseBtn">Cancel</button>
                     <button class="btn btn-primary" id="batchLoginStartBtn"><i class="fas fa-play"></i> Start</button>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Live Status Check Modal -->
+        <div id="liveCheckModalOverlay" class="profile-modal-overlay">
+            <div class="profile-modal" style="max-width:520px;padding:20px;">
+                <h2 style="margin:0 0 6px;"><i class="fas fa-satellite-dish" style="color:#22c55e;"></i> Live Status Check</h2>
+                <p style="font-size:12px;color:#94a3b8;margin:0 0 16px;">
+                    Provide an Excel file with a <b>Review Live Link</b> column. The app visits each link
+                    and reports whether the review is currently <b>LIVE</b> or <b>NOT LIVE</b>.
+                </p>
+                <div class="form-group">
+                    <label>Excel File</label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="text" id="liveCheckFilePath" placeholder="reviews.xlsx" style="flex:1;">
+                        <button class="btn btn-secondary btn-sm" id="liveCheckBrowseBtn"><i class="fas fa-folder-open"></i></button>
+                    </div>
+                    <div id="liveCheckPreview" style="display:none;align-items:center;gap:10px;margin-top:8px;padding:8px 12px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:6px;font-size:12px;flex-wrap:wrap;"></div>
+                </div>
+                <div style="display:flex;gap:12px;">
+                    <div class="form-group" style="flex:1;">
+                        <label>Workers</label>
+                        <input type="number" id="liveCheckWorkers" value="5" min="1" max="50" style="width:100px;">
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <label>Per-link Timeout (sec)</label>
+                        <input type="number" id="liveCheckTimeout" value="20" min="5" max="120" style="width:100px;">
+                    </div>
+                </div>
+                <div style="font-size:11px;color:#64748b;margin-top:-4px;margin-bottom:8px;">
+                    <i class="fas fa-info-circle" style="margin-right:4px;"></i>
+                    Reviews are looked up via a headless browser through your default proxy. Output Excel is saved next to the input.
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+                    <button class="btn btn-secondary" id="liveCheckCloseBtn">Cancel</button>
+                    <button class="btn btn-primary" id="liveCheckStartBtn"><i class="fas fa-play"></i> Start</button>
                 </div>
             </div>
         </div>

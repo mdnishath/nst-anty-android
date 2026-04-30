@@ -79,6 +79,9 @@ a = Analysis(
         # ── Utilities ────────────────────────────────────────────────────────
         'loguru', 'colorama', 'dotenv',
 
+        # ── Live Status Check ────────────────────────────────────────────────
+        'shared.live_status_check',
+
         # ── Google Drive backup ──────────────────────────────────────────────
         'shared.drive_backup',
         'google', 'google.auth', 'google.auth.transport.requests',

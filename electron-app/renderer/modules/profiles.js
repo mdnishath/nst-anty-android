@@ -989,6 +989,69 @@
         _$('batchLoginModalOverlay').classList.remove('active');
     }
 
+    // ── Live Status Check ─────────────────────────────────────────────────
+    let _liveCheckPoll = null;
+
+    function openLiveCheckModal() {
+        const ov = _$('liveCheckModalOverlay');
+        if (ov) ov.classList.add('active');
+    }
+
+    function closeLiveCheckModal() {
+        const ov = _$('liveCheckModalOverlay');
+        if (ov) ov.classList.remove('active');
+    }
+
+    async function startLiveCheck() {
+        const filePath = (_val('liveCheckFilePath') || '').trim();
+        if (!filePath) { App.toast('Pick an Excel file first', 'error'); return; }
+        const workers  = parseInt(_val('liveCheckWorkers'))  || 5;
+        const timeout  = parseInt(_val('liveCheckTimeout'))  || 20;
+        const btn = _$('liveCheckStartBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting…'; }
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/live-check/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_path: filePath, workers, timeout_sec: timeout }),
+            });
+            const d = await r.json();
+            if (!d.success) { App.toast(d.message || 'Could not start', 'error'); return; }
+            App.toast('Live status check started', 'success');
+            closeLiveCheckModal();
+            _startLiveCheckPolling();
+        } catch (e) {
+            App.toast('Error: ' + e.message, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-play"></i> Start'; }
+        }
+    }
+
+    function _startLiveCheckPolling() {
+        if (_liveCheckPoll) clearInterval(_liveCheckPoll);
+        _liveCheckPoll = setInterval(async () => {
+            try {
+                const r = await fetch('http://localhost:5000/api/profiles/live-check/status');
+                const s = await r.json();
+                const total = s.total || 0;
+                const done  = s.done  || 0;
+                const live  = s.live  || 0;
+                const nl    = s.not_live || 0;
+                const errs  = s.errors || 0;
+                if (s.running) {
+                    App.toast(`Live check: ${done}/${total} (LIVE ${live} · NOT ${nl} · ERR ${errs})`, 'info', 1200);
+                } else {
+                    clearInterval(_liveCheckPoll); _liveCheckPoll = null;
+                    if (s.report_path) {
+                        App.toast(`Live check done — LIVE ${live} · NOT ${nl} · ERR ${errs} → ${s.report_path}`, 'success', 8000);
+                    } else if (total > 0) {
+                        App.toast(`Live check finished — ${done}/${total}`, 'success');
+                    }
+                }
+            } catch { /* keep polling */ }
+        }, 2000);
+    }
+
     function _setBatchPreview(info) {
         const el = _$('batchLoginPreview');
         if (!el) return;
@@ -3206,6 +3269,14 @@
         _btn('batchLoginBrowseBtn', async () => {
             await browseFile('batchLoginFilePath');
             _previewBatchFile();
+        });
+
+        // Live Status Check modal
+        _btn('profileLiveCheckBtn', openLiveCheckModal);
+        _btn('liveCheckStartBtn', startLiveCheck);
+        _btn('liveCheckCloseBtn', closeLiveCheckModal);
+        _btn('liveCheckBrowseBtn', async () => {
+            await browseFile('liveCheckFilePath');
         });
         const blFileInp = _$('batchLoginFilePath');
         if (blFileInp) blFileInp.addEventListener('input', _previewBatchFile);
