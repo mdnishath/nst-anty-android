@@ -80,6 +80,12 @@ _status: dict = {
 }
 _status_lock = threading.Lock()
 _cancel = threading.Event()
+# Live worker handles so cancel() can forcibly close every browser.
+# 'browsers' → list of Playwright BrowserContexts (empty when idle)
+# 'loop'     → the asyncio loop the worker is using (so cancel can
+#              schedule the async close on the right loop from a
+#              different thread)
+_live_browser_ref: dict = {'browsers': [], 'loop': None}
 
 
 def get_status() -> dict:
@@ -88,7 +94,29 @@ def get_status() -> dict:
 
 
 def cancel():
+    """Hard cancel: signal the run to stop AND forcibly close every
+    live browser so any in-flight goto/wait calls abort immediately.
+    Without the close, navigation timeouts can keep the workers busy
+    for another 20-30s after Stop is pressed."""
     _cancel.set()
+    browsers = list(_live_browser_ref.get('browsers') or [])
+    loop = _live_browser_ref.get('loop')
+    if not browsers or loop is None:
+        return
+    # Schedule b.close() on the worker's own asyncio loop. We can call
+    # this from any thread thanks to call_soon_threadsafe; awaiting
+    # from elsewhere would crash because Playwright objects are bound
+    # to the loop that created them.
+    def _kill_all():
+        for b in browsers:
+            try:
+                asyncio.ensure_future(b.close())
+            except Exception:
+                pass
+    try:
+        loop.call_soon_threadsafe(_kill_all)
+    except Exception:
+        pass
 
 
 def start(file_path: str, num_workers: int = 5, timeout_sec: int = 20,
@@ -273,20 +301,23 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
 async def _run_checks(items: list[tuple[int, str]], workers: int,
                       timeout_sec: int, tmp_root: Path,
                       show_browser: bool = False) -> list[tuple[int, str, str]]:
+    """Spawn N independent Chromium browsers (one per worker) and pull
+    URLs off a shared queue. Each browser has its own user_data_dir, so
+    each gets its own cookies / consent state / process — Google doesn't
+    see one browser hammering 100s of review URLs in a row, which is
+    what was producing the rate-limit / captcha pattern."""
     from playwright.async_api import async_playwright
 
-    sem = asyncio.Semaphore(max(1, workers))
     out: list[tuple[int, str, str]] = []
     out_lock = asyncio.Lock()
-    browser_lock = asyncio.Lock()   # serialises browser relaunches
 
-    user_data = tmp_root / 'browser_data'
-    user_data.mkdir(parents=True, exist_ok=True)
+    n_workers = max(1, workers)
 
-    async def _launch(p):
-        """Launch (or relaunch) the persistent context."""
+    async def _launch(p, slot: int):
+        ud = tmp_root / f'browser_{slot}'
+        ud.mkdir(parents=True, exist_ok=True)
         return await p.chromium.launch_persistent_context(
-            user_data_dir=str(user_data),
+            user_data_dir=str(ud),
             headless=not show_browser,
             locale='en-US',
             user_agent=('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -301,81 +332,76 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
             ],
         )
 
+    async def _warmup(browser):
+        try:
+            page = await browser.new_page()
+            try:
+                await page.goto('https://maps.google.com/?hl=en',
+                                wait_until='domcontentloaded', timeout=20000)
+                await page.wait_for_timeout(1500)
+                for sel in [
+                    'button[aria-label*="Accept all" i]',
+                    'button:has-text("Accept all")',
+                    'button:has-text("I agree")',
+                    'button:has-text("Tout accepter")',
+                    'form[action*="consent"] button[type="submit"]',
+                ]:
+                    try:
+                        b = page.locator(sel).first
+                        if await b.count() > 0 and await b.is_visible(timeout=600):
+                            await b.click()
+                            await page.wait_for_timeout(800)
+                            break
+                    except Exception:
+                        continue
+            finally:
+                try: await page.close()
+                except Exception: pass
+        except Exception:
+            pass
+
     async with async_playwright() as p:
-        browser_ref: dict = {'b': await _launch(p)}
+        # Launch all workers' browsers in parallel for fast startup
+        browsers = await asyncio.gather(
+            *[_launch(p, i) for i in range(n_workers)],
+            return_exceptions=False,
+        )
 
-        async def _warmup():
-            try:
-                warmup = await browser_ref['b'].new_page()
+        # Publish all browsers + loop so cancel() can close them
+        # immediately from a different thread.
+        _live_browser_ref['browsers'] = list(browsers)
+        _live_browser_ref['loop'] = asyncio.get_event_loop()
+
+        # Warm up every browser in parallel
+        await asyncio.gather(*[_warmup(b) for b in browsers],
+                             return_exceptions=True)
+
+        # Shared work queue
+        q: asyncio.Queue = asyncio.Queue()
+        for it in items:
+            q.put_nowait(it)
+
+        async def _worker_loop(slot: int, browser):
+            while True:
+                if _cancel.is_set():
+                    return
                 try:
-                    await warmup.goto('https://maps.google.com/?hl=en',
-                                      wait_until='domcontentloaded', timeout=20000)
-                    await warmup.wait_for_timeout(1500)
-                    for sel in [
-                        'button[aria-label*="Accept all" i]',
-                        'button:has-text("Accept all")',
-                        'button:has-text("I agree")',
-                        'button:has-text("Tout accepter")',
-                        'form[action*="consent"] button[type="submit"]',
-                    ]:
-                        try:
-                            b = warmup.locator(sel).first
-                            if await b.count() > 0 and await b.is_visible(timeout=600):
-                                await b.click()
-                                await warmup.wait_for_timeout(800)
-                                break
-                        except Exception:
-                            continue
-                finally:
-                    try: await warmup.close()
-                    except Exception: pass
-            except Exception:
-                pass
+                    row_idx, url = q.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
 
-        await _warmup()
-
-        async def _safe_new_page():
-            """Return a fresh page; if the browser context is dead,
-            relaunch it once and try again."""
-            try:
-                return await browser_ref['b'].new_page()
-            except Exception as e:
-                msg = str(e).lower()
-                if any(p_ in msg for p_ in (
-                    'target page', 'context or browser', 'closed',
-                    'has been closed', 'browser has been closed',
-                )):
-                    async with browser_lock:
-                        # Re-check after acquiring lock — another worker
-                        # may have already relaunched.
-                        try:
-                            return await browser_ref['b'].new_page()
-                        except Exception:
-                            pass
-                        try:
-                            await browser_ref['b'].close()
-                        except Exception:
-                            pass
-                        browser_ref['b'] = await _launch(p)
-                        await _warmup()
-                    return await browser_ref['b'].new_page()
-                raise
-
-        async def _check_one(row_idx: int, url: str):
-            if _cancel.is_set():
-                async with out_lock:
-                    out.append((row_idx, url, 'Cancelled'))
-                return
-            async with sem:
                 with _status_lock:
                     _status['current_url'] = url[:120]
                 page = None
                 verdict = 'Error'
                 try:
-                    page = await _safe_new_page()
+                    page = await browser.new_page()
                     verdict = await _check_url(page, url, timeout_sec)
                 except Exception as e:
-                    verdict = f'Error: {str(e)[:60]}'
+                    if _cancel.is_set():
+                        verdict = 'Cancelled'
+                    else:
+                        verdict = f'Error: {str(e)[:60]}'
                 finally:
                     try:
                         if page: await page.close()
@@ -393,11 +419,29 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
                     else:
                         _status['errors'] += 1
 
-        await asyncio.gather(*[_check_one(r, u) for (r, u) in items],
-                             return_exceptions=True)
+        await asyncio.gather(
+            *[_worker_loop(i, b) for i, b in enumerate(browsers)],
+            return_exceptions=True,
+        )
 
-        try: await browser_ref['b'].close()
-        except Exception: pass
+        # If we were cancelled mid-run, mark every still-queued URL as
+        # 'Cancelled' so the report reflects user intent.
+        if _cancel.is_set():
+            while True:
+                try:
+                    row_idx, url = q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                async with out_lock:
+                    out.append((row_idx, url, 'Cancelled'))
+
+        # Close all browsers
+        for b in browsers:
+            try: await b.close()
+            except Exception: pass
+
+        _live_browser_ref['browsers'] = []
+        _live_browser_ref['loop'] = None
 
     out.sort(key=lambda x: x[0])
     return out
