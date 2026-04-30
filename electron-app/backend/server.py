@@ -2406,6 +2406,16 @@ def profiles_cleanup():
 from shared import live_status_check as _live_check
 
 
+def _is_url_like(s: str) -> bool:
+    """True only if the cell value is a real http(s) URL — skips notes,
+    empty strings, formula error markers, etc. so the link count matches
+    what the user actually sees in the column."""
+    if not s:
+        return False
+    s = s.strip().lower()
+    return s.startswith('http://') or s.startswith('https://')
+
+
 @app.route('/api/profiles/live-check/preview', methods=['POST'])
 def profiles_live_check_preview():
     """Read the Excel file and report how many rows have a Review Live Link."""
@@ -2441,6 +2451,9 @@ def profiles_live_check_preview():
                 continue
             url = str(v).strip()
             if not url:
+                continue
+            # Only count actual URLs (skip stray text / whitespace junk)
+            if not _is_url_like(url):
                 continue
             non_empty += 1
             key = url.lower()

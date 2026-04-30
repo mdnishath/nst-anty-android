@@ -190,6 +190,10 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
             url = str(v).strip()
             if not url:
                 continue
+            # Skip cells that aren't actually URLs (notes, junk, etc.)
+            ul = url.lower()
+            if not (ul.startswith('http://') or ul.startswith('https://')):
+                continue
             all_rows.append((r, url))
             key = url.lower()
             if key not in first_row_for_url:
