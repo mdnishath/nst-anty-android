@@ -278,19 +278,20 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
     sem = asyncio.Semaphore(max(1, workers))
     out: list[tuple[int, str, str]] = []
     out_lock = asyncio.Lock()
+    browser_lock = asyncio.Lock()   # serialises browser relaunches
 
-    # Single browser, ephemeral contexts — minimal disk footprint and easy
-    # cleanup at the end. user_data_dir lives under our tmp_root so we can
-    # rmtree it ourselves once we're done.
     user_data = tmp_root / 'browser_data'
     user_data.mkdir(parents=True, exist_ok=True)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch_persistent_context(
+    async def _launch(p):
+        """Launch (or relaunch) the persistent context."""
+        return await p.chromium.launch_persistent_context(
             user_data_dir=str(user_data),
             headless=not show_browser,
             locale='en-US',
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+            user_agent=('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                        'AppleWebKit/537.36 (KHTML, like Gecko) '
+                        'Chrome/132.0.0.0 Safari/537.36'),
             extra_http_headers={'Accept-Language': 'en-US,en;q=0.9'},
             args=[
                 '--disable-blink-features=AutomationControlled',
@@ -300,36 +301,65 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
             ],
         )
 
-        # Warmup: visit maps.google.com once and accept any cookie / consent
-        # banner so subsequent review URLs render the review panel directly
-        # instead of being intercepted by consent.google.com.
-        try:
-            warmup = await browser.new_page()
+    async with async_playwright() as p:
+        browser_ref: dict = {'b': await _launch(p)}
+
+        async def _warmup():
             try:
-                await warmup.goto('https://maps.google.com/?hl=en',
-                                  wait_until='domcontentloaded', timeout=20000)
-                await warmup.wait_for_timeout(1500)
-                # Accept any consent dialog that appears
-                for sel in [
-                    'button[aria-label*="Accept all" i]',
-                    'button:has-text("Accept all")',
-                    'button:has-text("I agree")',
-                    'button:has-text("Tout accepter")',
-                    'form[action*="consent"] button[type="submit"]',
-                ]:
-                    try:
-                        b = warmup.locator(sel).first
-                        if await b.count() > 0 and await b.is_visible(timeout=600):
-                            await b.click()
-                            await warmup.wait_for_timeout(800)
-                            break
-                    except Exception:
-                        continue
-            finally:
-                try: await warmup.close()
-                except Exception: pass
-        except Exception:
-            pass
+                warmup = await browser_ref['b'].new_page()
+                try:
+                    await warmup.goto('https://maps.google.com/?hl=en',
+                                      wait_until='domcontentloaded', timeout=20000)
+                    await warmup.wait_for_timeout(1500)
+                    for sel in [
+                        'button[aria-label*="Accept all" i]',
+                        'button:has-text("Accept all")',
+                        'button:has-text("I agree")',
+                        'button:has-text("Tout accepter")',
+                        'form[action*="consent"] button[type="submit"]',
+                    ]:
+                        try:
+                            b = warmup.locator(sel).first
+                            if await b.count() > 0 and await b.is_visible(timeout=600):
+                                await b.click()
+                                await warmup.wait_for_timeout(800)
+                                break
+                        except Exception:
+                            continue
+                finally:
+                    try: await warmup.close()
+                    except Exception: pass
+            except Exception:
+                pass
+
+        await _warmup()
+
+        async def _safe_new_page():
+            """Return a fresh page; if the browser context is dead,
+            relaunch it once and try again."""
+            try:
+                return await browser_ref['b'].new_page()
+            except Exception as e:
+                msg = str(e).lower()
+                if any(p_ in msg for p_ in (
+                    'target page', 'context or browser', 'closed',
+                    'has been closed', 'browser has been closed',
+                )):
+                    async with browser_lock:
+                        # Re-check after acquiring lock — another worker
+                        # may have already relaunched.
+                        try:
+                            return await browser_ref['b'].new_page()
+                        except Exception:
+                            pass
+                        try:
+                            await browser_ref['b'].close()
+                        except Exception:
+                            pass
+                        browser_ref['b'] = await _launch(p)
+                        await _warmup()
+                    return await browser_ref['b'].new_page()
+                raise
 
         async def _check_one(row_idx: int, url: str):
             if _cancel.is_set():
@@ -342,7 +372,7 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
                 page = None
                 verdict = 'Error'
                 try:
-                    page = await browser.new_page()
+                    page = await _safe_new_page()
                     verdict = await _check_url(page, url, timeout_sec)
                 except Exception as e:
                     verdict = f'Error: {str(e)[:60]}'
@@ -366,7 +396,7 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
         await asyncio.gather(*[_check_one(r, u) for (r, u) in items],
                              return_exceptions=True)
 
-        try: await browser.close()
+        try: await browser_ref['b'].close()
         except Exception: pass
 
     out.sort(key=lambda x: x[0])
