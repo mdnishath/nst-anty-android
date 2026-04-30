@@ -250,12 +250,47 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
         browser = await p.chromium.launch_persistent_context(
             user_data_dir=str(user_data),
             headless=True,
+            locale='en-US',
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+            extra_http_headers={'Accept-Language': 'en-US,en;q=0.9'},
             args=[
                 '--disable-blink-features=AutomationControlled',
                 '--disable-features=Translate',
                 '--no-default-browser-check',
+                '--lang=en-US',
             ],
         )
+
+        # Warmup: visit maps.google.com once and accept any cookie / consent
+        # banner so subsequent review URLs render the review panel directly
+        # instead of being intercepted by consent.google.com.
+        try:
+            warmup = await browser.new_page()
+            try:
+                await warmup.goto('https://maps.google.com/?hl=en',
+                                  wait_until='domcontentloaded', timeout=20000)
+                await warmup.wait_for_timeout(1500)
+                # Accept any consent dialog that appears
+                for sel in [
+                    'button[aria-label*="Accept all" i]',
+                    'button:has-text("Accept all")',
+                    'button:has-text("I agree")',
+                    'button:has-text("Tout accepter")',
+                    'form[action*="consent"] button[type="submit"]',
+                ]:
+                    try:
+                        b = warmup.locator(sel).first
+                        if await b.count() > 0 and await b.is_visible(timeout=600):
+                            await b.click()
+                            await warmup.wait_for_timeout(800)
+                            break
+                    except Exception:
+                        continue
+            finally:
+                try: await warmup.close()
+                except Exception: pass
+        except Exception:
+            pass
 
         async def _check_one(row_idx: int, url: str):
             if _cancel.is_set():

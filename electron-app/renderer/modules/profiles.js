@@ -990,38 +990,16 @@
     }
 
     // ── Live Status Check ─────────────────────────────────────────────────
-    let _liveCheckPoll = null;
-
     function openLiveCheckModal() {
         const ov = _$('liveCheckModalOverlay');
         if (ov) ov.classList.add('active');
-        // Reset UI state every time it opens
-        _resetLiveCheckUI();
         const fp = _val('liveCheckFilePath');
-        if (fp) _previewLiveCheckFile();   // re-show preview if path persisted
+        if (fp) _previewLiveCheckFile();
     }
 
     function closeLiveCheckModal() {
         const ov = _$('liveCheckModalOverlay');
         if (ov) ov.classList.remove('active');
-    }
-
-    function _resetLiveCheckUI() {
-        const set = (id, html) => { const el = _$(id); if (el) el.innerHTML = html; };
-        set('liveCheckProgressText', '0 / 0');
-        set('liveCheckLive', '0');
-        set('liveCheckMissing', '0');
-        set('liveCheckErrors', '0');
-        set('liveCheckCurrent', '');
-        const bar = _$('liveCheckProgressBar'); if (bar) bar.style.width = '0%';
-        const prog = _$('liveCheckProgress');   if (prog) prog.style.display = 'none';
-        const res  = _$('liveCheckResult');     if (res)  res.style.display  = 'none';
-        const cancelBtn = _$('liveCheckCancelBtn'); if (cancelBtn) cancelBtn.style.display = 'none';
-        const startBtn  = _$('liveCheckStartBtn');  if (startBtn) {
-            startBtn.style.display = '';
-            startBtn.disabled = false;
-            startBtn.innerHTML = '<i class="fas fa-play"></i> Start';
-        }
     }
 
     async function _previewLiveCheckFile() {
@@ -1059,13 +1037,8 @@
         if (!filePath) { App.toast('Pick an Excel file first', 'error'); return; }
         const workers  = parseInt(_val('liveCheckWorkers'))  || 5;
         const timeout  = parseInt(_val('liveCheckTimeout'))  || 20;
-
-        // Confirm count + start
-        const startBtn  = _$('liveCheckStartBtn');
-        const cancelBtn = _$('liveCheckCancelBtn');
-
+        const startBtn = _$('liveCheckStartBtn');
         if (startBtn) { startBtn.disabled = true; startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting…'; }
-
         try {
             const r = await fetch('http://localhost:5000/api/profiles/live-check/start', {
                 method: 'POST',
@@ -1075,74 +1048,18 @@
             const d = await r.json();
             if (!d.success) {
                 App.toast(d.message || 'Could not start', 'error');
-                if (startBtn) { startBtn.disabled = false; startBtn.innerHTML = '<i class="fas fa-play"></i> Start'; }
                 return;
             }
             App.toast('Live status check started', 'success');
-            // Show progress panel + cancel button, hide start button
-            const prog = _$('liveCheckProgress'); if (prog) prog.style.display = 'block';
-            if (startBtn)  startBtn.style.display  = 'none';
-            if (cancelBtn) cancelBtn.style.display = '';
-            _startLiveCheckPolling();
+            // Close modal + show the SAME bottom-left progress panel that
+            // every other op uses (Run Ops, Appeal, Health, etc.).
+            closeLiveCheckModal();
+            _startOpProgress('live-check');
         } catch (e) {
             App.toast('Error: ' + e.message, 'error');
+        } finally {
             if (startBtn) { startBtn.disabled = false; startBtn.innerHTML = '<i class="fas fa-play"></i> Start'; }
         }
-    }
-
-    async function cancelLiveCheck() {
-        try {
-            await fetch('http://localhost:5000/api/profiles/live-check/cancel', { method: 'POST' });
-            App.toast('Cancel requested — finishing in-flight checks…', 'info');
-        } catch (e) { App.toast('Cancel failed: ' + e.message, 'error'); }
-    }
-
-    function _startLiveCheckPolling() {
-        if (_liveCheckPoll) clearInterval(_liveCheckPoll);
-        _liveCheckPoll = setInterval(async () => {
-            try {
-                const r = await fetch('http://localhost:5000/api/profiles/live-check/status');
-                const s = await r.json();
-                const total = s.total || 0;
-                const done  = s.done  || 0;
-                const live  = s.live  || 0;
-                const nl    = s.not_live || 0;
-                const errs  = s.errors || 0;
-                const set = (id, html) => { const el = _$(id); if (el) el.innerHTML = html; };
-
-                set('liveCheckProgressText', `${done} / ${total}`);
-                set('liveCheckLive', String(live));
-                set('liveCheckMissing', String(nl));
-                set('liveCheckErrors', String(errs));
-                const bar = _$('liveCheckProgressBar');
-                if (bar) bar.style.width = (total > 0 ? (done * 100 / total) : 0).toFixed(1) + '%';
-                const cur = _$('liveCheckCurrent');
-                if (cur) cur.textContent = s.current_url ? `Now: ${s.current_url}` : '';
-
-                if (!s.running) {
-                    clearInterval(_liveCheckPoll); _liveCheckPoll = null;
-                    const cancelBtn = _$('liveCheckCancelBtn'); if (cancelBtn) cancelBtn.style.display = 'none';
-                    const startBtn  = _$('liveCheckStartBtn');  if (startBtn)  {
-                        startBtn.style.display = '';
-                        startBtn.disabled = false;
-                        startBtn.innerHTML = '<i class="fas fa-play"></i> Start';
-                    }
-                    const res = _$('liveCheckResult');
-                    if (res) {
-                        res.style.display = 'block';
-                        if (s.report_path) {
-                            res.innerHTML =
-                                `<i class="fas fa-check-circle"></i> Done — ` +
-                                `<b>${live}</b> live, <b>${nl}</b> missing, <b>${errs}</b> errors. ` +
-                                `<br><span style="color:#94a3b8;">Saved to:</span> ` +
-                                `<code style="font-size:11px;background:#1e293b;padding:1px 4px;border-radius:3px;">${s.report_path}</code>`;
-                        } else {
-                            res.innerHTML = `<i class="fas fa-info-circle"></i> Finished — ${done}/${total}`;
-                        }
-                    }
-                }
-            } catch { /* keep polling */ }
-        }, 1500);
     }
 
     function _setBatchPreview(info) {
@@ -2512,6 +2429,7 @@
         'delete':      { icon: 'fa-trash',        label: 'Delete Profiles', successLbl: 'Deleted',    failLbl: 'Failed',  pendingLbl: 'Remaining' },
         'run-ops':     { icon: 'fa-cogs',         label: 'Run Operations',  successLbl: 'Done',       failLbl: 'Failed',  pendingLbl: 'Remaining' },
         'gmb-review':  { icon: 'fa-link',         label: 'GMB Review URL',  successLbl: 'Resolved',   failLbl: 'Failed',  pendingLbl: 'Remaining' },
+        'live-check':  { icon: 'fa-satellite-dish', label: 'Live Status Check', successLbl: 'Live',     failLbl: 'Missing', pendingLbl: 'Remaining' },
     };
 
     // Auto-detect running operations on page load / refresh
@@ -2525,6 +2443,7 @@
                 { type: 'health', url: '/api/profiles/health-status' },
                 { type: 'review', url: '/api/profiles/review-status' },
                 { type: 'gmb-review', url: '/api/gmb-to-review/status' },
+                { type: 'live-check', url: '/api/profiles/live-check/status' },
             ];
             for (const chk of checks) {
                 try {
@@ -2670,6 +2589,14 @@
                     isRunning = !!st.running;
                     successCount = st.success || 0;
                     failedCount = st.failed || 0;
+                    reportPath = st.report_path;
+                } else if (type === 'live-check') {
+                    const st = await _api('/api/profiles/live-check/status');
+                    done = st.done || 0;
+                    total = st.total || 0;
+                    isRunning = !!st.running;
+                    successCount = st.live || 0;
+                    failedCount  = st.not_live || 0;
                     reportPath = st.report_path;
                 } else {
                     let endpoint;
@@ -2828,6 +2755,7 @@
             let endpoint;
             if (_opType === 'appeal') endpoint = '/api/profiles/stop-appeal';
             else if (_opType === 'review') endpoint = '/api/profiles/stop-review';
+            else if (_opType === 'live-check') endpoint = '/api/profiles/live-check/cancel';
             else endpoint = '/api/profiles/stop-health';
             _api(endpoint, { method: 'POST' }).catch(() => {});
         }
@@ -3367,7 +3295,6 @@
         // Live Status Check modal
         _btn('profileLiveCheckBtn', openLiveCheckModal);
         _btn('liveCheckStartBtn', startLiveCheck);
-        _btn('liveCheckCancelBtn', cancelLiveCheck);
         _btn('liveCheckCloseBtn', closeLiveCheckModal);
         _btn('liveCheckBrowseBtn', async () => {
             await browseFile('liveCheckFilePath');
