@@ -125,6 +125,20 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
             'current_url': '', 'report_path': '',
         })
 
+    # Sweep any leftover temp folders from previously crashed runs first
+    # (so chromium garbage doesn't accumulate even when the app was killed
+    # mid-check). We're scoped to our own prefix only — never touches
+    # other apps' temp data or the profile-manager folder.
+    try:
+        _tmp_parent = Path(tempfile.gettempdir())
+        for stale in _tmp_parent.glob('nst_live_check_*'):
+            try:
+                shutil.rmtree(stale, ignore_errors=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     # Dedicated temp dir for the browser's user-data — wiped after the run.
     # NEVER points at the profile-manager data folder.
     tmp_root = Path(tempfile.mkdtemp(prefix='nst_live_check_'))
@@ -133,10 +147,10 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
         ws = wb.active
 
         headers = [str(c.value or '').strip() for c in ws[1]]
+        # ONLY accept the exact "Review Live Link" header per user spec.
         link_col_idx = None
         for i, h in enumerate(headers, 1):
-            if h.lower() in ('review live link', 'live link', 'review url',
-                             'gmb url', 'link', 'url'):
+            if h.strip().lower() == 'review live link':
                 link_col_idx = i
                 break
         if link_col_idx is None:
@@ -144,7 +158,8 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
                 _status['running'] = False
                 _status['finished_at'] = datetime.utcnow().isoformat() + 'Z'
                 _status['errors'] = 1
-                _status['current_url'] = "FATAL: input has no 'Review Live Link' column"
+                _status['current_url'] = ("FATAL: header 'Review Live Link' not found. "
+                                          "Add a column named exactly 'Review Live Link'.")
             return
 
         status_col_idx = None
