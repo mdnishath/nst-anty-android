@@ -2406,6 +2406,46 @@ def profiles_cleanup():
 from shared import live_status_check as _live_check
 
 
+@app.route('/api/profiles/live-check/preview', methods=['POST'])
+def profiles_live_check_preview():
+    """Read the Excel file and report how many rows have a Review Live Link."""
+    body = request.get_json(silent=True) or {}
+    file_path = (body.get('file_path') or '').strip()
+    if not file_path:
+        return jsonify({'success': False, 'message': 'file_path is required'}), 400
+    try:
+        import openpyxl
+        from pathlib import Path as _P
+        if not _P(file_path).exists():
+            return jsonify({'success': False, 'message': f'File not found: {file_path}'})
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb.active
+        headers = [str(c.value or '').strip() for c in next(ws.iter_rows(max_row=1))]
+        link_idx = next(
+            (i + 1 for i, h in enumerate(headers)
+             if h.strip().lower() == 'review live link'),
+            None,
+        )
+        if link_idx is None:
+            wb.close()
+            return jsonify({'success': False,
+                            'message': "Header 'Review Live Link' not found in the file."})
+        link_count = 0
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            v = row[link_idx - 1] if link_idx - 1 < len(row) else None
+            if v and str(v).strip():
+                link_count += 1
+        wb.close()
+        return jsonify({
+            'success': True,
+            'file_name': _P(file_path).name,
+            'total_links': link_count,
+            'header_column': headers[link_idx - 1],
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Read error: {e}'})
+
+
 @app.route('/api/profiles/live-check/start', methods=['POST'])
 def profiles_live_check_start():
     body = request.get_json(silent=True) or {}

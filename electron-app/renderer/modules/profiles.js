@@ -995,6 +995,10 @@
     function openLiveCheckModal() {
         const ov = _$('liveCheckModalOverlay');
         if (ov) ov.classList.add('active');
+        // Reset UI state every time it opens
+        _resetLiveCheckUI();
+        const fp = _val('liveCheckFilePath');
+        if (fp) _previewLiveCheckFile();   // re-show preview if path persisted
     }
 
     function closeLiveCheckModal() {
@@ -1002,13 +1006,66 @@
         if (ov) ov.classList.remove('active');
     }
 
+    function _resetLiveCheckUI() {
+        const set = (id, html) => { const el = _$(id); if (el) el.innerHTML = html; };
+        set('liveCheckProgressText', '0 / 0');
+        set('liveCheckLive', '0');
+        set('liveCheckMissing', '0');
+        set('liveCheckErrors', '0');
+        set('liveCheckCurrent', '');
+        const bar = _$('liveCheckProgressBar'); if (bar) bar.style.width = '0%';
+        const prog = _$('liveCheckProgress');   if (prog) prog.style.display = 'none';
+        const res  = _$('liveCheckResult');     if (res)  res.style.display  = 'none';
+        const cancelBtn = _$('liveCheckCancelBtn'); if (cancelBtn) cancelBtn.style.display = 'none';
+        const startBtn  = _$('liveCheckStartBtn');  if (startBtn) {
+            startBtn.style.display = '';
+            startBtn.disabled = false;
+            startBtn.innerHTML = '<i class="fas fa-play"></i> Start';
+        }
+    }
+
+    async function _previewLiveCheckFile() {
+        const filePath = (_val('liveCheckFilePath') || '').trim();
+        const prev = _$('liveCheckPreview');
+        if (!prev) return;
+        if (!filePath) { prev.style.display = 'none'; return; }
+        prev.style.display = 'block';
+        prev.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reading file…';
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/live-check/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_path: filePath }),
+            });
+            const d = await r.json();
+            if (d.success) {
+                prev.innerHTML =
+                    `<i class="fas fa-check-circle" style="color:#22c55e;"></i> ` +
+                    `<b>${d.file_name}</b> — ` +
+                    `<b style="color:#22c55e;">${d.total_links}</b> links to check ` +
+                    `<span style="color:#64748b;">(column: "${d.header_column}")</span>`;
+            } else {
+                prev.innerHTML =
+                    `<i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> ` +
+                    `${d.message || 'Could not read file'}`;
+            }
+        } catch (e) {
+            prev.innerHTML = `<i class="fas fa-times-circle" style="color:#ef4444;"></i> ${e.message}`;
+        }
+    }
+
     async function startLiveCheck() {
         const filePath = (_val('liveCheckFilePath') || '').trim();
         if (!filePath) { App.toast('Pick an Excel file first', 'error'); return; }
         const workers  = parseInt(_val('liveCheckWorkers'))  || 5;
         const timeout  = parseInt(_val('liveCheckTimeout'))  || 20;
-        const btn = _$('liveCheckStartBtn');
-        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting…'; }
+
+        // Confirm count + start
+        const startBtn  = _$('liveCheckStartBtn');
+        const cancelBtn = _$('liveCheckCancelBtn');
+
+        if (startBtn) { startBtn.disabled = true; startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting…'; }
+
         try {
             const r = await fetch('http://localhost:5000/api/profiles/live-check/start', {
                 method: 'POST',
@@ -1016,15 +1073,28 @@
                 body: JSON.stringify({ file_path: filePath, workers, timeout_sec: timeout }),
             });
             const d = await r.json();
-            if (!d.success) { App.toast(d.message || 'Could not start', 'error'); return; }
+            if (!d.success) {
+                App.toast(d.message || 'Could not start', 'error');
+                if (startBtn) { startBtn.disabled = false; startBtn.innerHTML = '<i class="fas fa-play"></i> Start'; }
+                return;
+            }
             App.toast('Live status check started', 'success');
-            closeLiveCheckModal();
+            // Show progress panel + cancel button, hide start button
+            const prog = _$('liveCheckProgress'); if (prog) prog.style.display = 'block';
+            if (startBtn)  startBtn.style.display  = 'none';
+            if (cancelBtn) cancelBtn.style.display = '';
             _startLiveCheckPolling();
         } catch (e) {
             App.toast('Error: ' + e.message, 'error');
-        } finally {
-            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-play"></i> Start'; }
+            if (startBtn) { startBtn.disabled = false; startBtn.innerHTML = '<i class="fas fa-play"></i> Start'; }
         }
+    }
+
+    async function cancelLiveCheck() {
+        try {
+            await fetch('http://localhost:5000/api/profiles/live-check/cancel', { method: 'POST' });
+            App.toast('Cancel requested — finishing in-flight checks…', 'info');
+        } catch (e) { App.toast('Cancel failed: ' + e.message, 'error'); }
     }
 
     function _startLiveCheckPolling() {
@@ -1038,18 +1108,41 @@
                 const live  = s.live  || 0;
                 const nl    = s.not_live || 0;
                 const errs  = s.errors || 0;
-                if (s.running) {
-                    App.toast(`Live check: ${done}/${total} (LIVE ${live} · NOT ${nl} · ERR ${errs})`, 'info', 1200);
-                } else {
+                const set = (id, html) => { const el = _$(id); if (el) el.innerHTML = html; };
+
+                set('liveCheckProgressText', `${done} / ${total}`);
+                set('liveCheckLive', String(live));
+                set('liveCheckMissing', String(nl));
+                set('liveCheckErrors', String(errs));
+                const bar = _$('liveCheckProgressBar');
+                if (bar) bar.style.width = (total > 0 ? (done * 100 / total) : 0).toFixed(1) + '%';
+                const cur = _$('liveCheckCurrent');
+                if (cur) cur.textContent = s.current_url ? `Now: ${s.current_url}` : '';
+
+                if (!s.running) {
                     clearInterval(_liveCheckPoll); _liveCheckPoll = null;
-                    if (s.report_path) {
-                        App.toast(`Live check done — LIVE ${live} · NOT ${nl} · ERR ${errs} → ${s.report_path}`, 'success', 8000);
-                    } else if (total > 0) {
-                        App.toast(`Live check finished — ${done}/${total}`, 'success');
+                    const cancelBtn = _$('liveCheckCancelBtn'); if (cancelBtn) cancelBtn.style.display = 'none';
+                    const startBtn  = _$('liveCheckStartBtn');  if (startBtn)  {
+                        startBtn.style.display = '';
+                        startBtn.disabled = false;
+                        startBtn.innerHTML = '<i class="fas fa-play"></i> Start';
+                    }
+                    const res = _$('liveCheckResult');
+                    if (res) {
+                        res.style.display = 'block';
+                        if (s.report_path) {
+                            res.innerHTML =
+                                `<i class="fas fa-check-circle"></i> Done — ` +
+                                `<b>${live}</b> live, <b>${nl}</b> missing, <b>${errs}</b> errors. ` +
+                                `<br><span style="color:#94a3b8;">Saved to:</span> ` +
+                                `<code style="font-size:11px;background:#1e293b;padding:1px 4px;border-radius:3px;">${s.report_path}</code>`;
+                        } else {
+                            res.innerHTML = `<i class="fas fa-info-circle"></i> Finished — ${done}/${total}`;
+                        }
                     }
                 }
             } catch { /* keep polling */ }
-        }, 2000);
+        }, 1500);
     }
 
     function _setBatchPreview(info) {
@@ -3274,10 +3367,14 @@
         // Live Status Check modal
         _btn('profileLiveCheckBtn', openLiveCheckModal);
         _btn('liveCheckStartBtn', startLiveCheck);
+        _btn('liveCheckCancelBtn', cancelLiveCheck);
         _btn('liveCheckCloseBtn', closeLiveCheckModal);
         _btn('liveCheckBrowseBtn', async () => {
             await browseFile('liveCheckFilePath');
+            _previewLiveCheckFile();
         });
+        const lcFileInp = _$('liveCheckFilePath');
+        if (lcFileInp) lcFileInp.addEventListener('input', _previewLiveCheckFile);
         const blFileInp = _$('batchLoginFilePath');
         if (blFileInp) blFileInp.addEventListener('input', _previewBatchFile);
 
