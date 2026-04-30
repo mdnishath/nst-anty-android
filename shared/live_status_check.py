@@ -224,8 +224,23 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
             ws.cell(row=row_idx, column=status_col_idx, value=verdict)
 
         in_path = Path(file_path)
-        out_name = f"{in_path.stem}_live_status_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        out_path = in_path.parent / out_name
+        out_name = (
+            f"{in_path.stem}_live_status_"
+            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+        # Save to RESOURCES_PATH/output so the report appears in the in-app
+        # Report Ledger automatically (alongside batch-login reports etc.).
+        # Fallback to next to the input file if resources_path is missing.
+        out_dir = None
+        if resources_path is not None:
+            try:
+                out_dir = Path(resources_path) / 'output'
+                out_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                out_dir = None
+        if out_dir is None:
+            out_dir = in_path.parent
+        out_path = out_dir / out_name
         wb.save(out_path)
         wb.close()
 

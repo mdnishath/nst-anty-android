@@ -2445,6 +2445,10 @@ def profiles_live_check_preview():
         seen = set()
         non_empty = 0
         duplicates = 0
+        first_url_row = None
+        last_url_row = None
+        sample_first = ''
+        sample_last = ''
         for r in range(2, ws.max_row + 1):
             v = ws.cell(row=r, column=link_idx).value
             if v is None:
@@ -2456,11 +2460,20 @@ def profiles_live_check_preview():
             if not _is_url_like(url):
                 continue
             non_empty += 1
+            if first_url_row is None:
+                first_url_row = r
+                sample_first = url
+            last_url_row = r
+            sample_last = url
             key = url.lower()
             if key in seen:
                 duplicates += 1
             else:
                 seen.add(key)
+        # Convert column index (1-based) to Excel letter for the user's
+        # cross-reference (so they can verify it's the right column).
+        from openpyxl.utils import get_column_letter
+        col_letter = get_column_letter(link_idx)
         wb.close()
         return jsonify({
             'success': True,
@@ -2469,6 +2482,11 @@ def profiles_live_check_preview():
             'unique_links': len(seen),
             'duplicates': duplicates,
             'header_column': headers[link_idx - 1],
+            'column_letter': col_letter,
+            'first_row': first_url_row,
+            'last_row': last_url_row,
+            'sample_first': sample_first[:80],
+            'sample_last': sample_last[:80],
         })
     except Exception as e:
         return jsonify({'success': False, 'message': f'Read error: {e}'})

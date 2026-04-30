@@ -1019,16 +1019,22 @@
             if (d.success) {
                 const dup = d.duplicates || 0;
                 const uniq = d.unique_links != null ? d.unique_links : d.total_links;
-                let dupNote = '';
-                if (dup > 0) {
-                    dupNote = ` <span style="color:#f59e0b;">(${dup} duplicate${dup>1?'s':''} skipped)</span>`;
+                const dupNote = dup > 0
+                    ? ` <span style="color:#f59e0b;">(${dup} duplicate${dup>1?'s':''} skipped)</span>`
+                    : '';
+                let detail = '';
+                if (d.column_letter && d.first_row && d.last_row) {
+                    detail = `<div style="margin-top:6px;font-size:11px;color:#64748b;">` +
+                             `Column <b>${d.column_letter}</b> "${d.header_column}" · ` +
+                             `URLs span rows ${d.first_row} → ${d.last_row} · ` +
+                             `<b>${d.total_links}</b> URL cells found` +
+                             `</div>`;
                 }
                 prev.innerHTML =
                     `<i class="fas fa-check-circle" style="color:#22c55e;"></i> ` +
                     `<b>${d.file_name}</b> — ` +
                     `<b style="color:#22c55e;">${uniq}</b> unique links to check` +
-                    dupNote +
-                    ` <span style="color:#64748b;">(column: "${d.header_column}", ${d.total_links} total rows)</span>`;
+                    dupNote + detail;
             } else {
                 prev.innerHTML =
                     `<i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> ` +
