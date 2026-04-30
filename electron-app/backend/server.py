@@ -2418,9 +2418,11 @@ def profiles_live_check_preview():
         from pathlib import Path as _P
         if not _P(file_path).exists():
             return jsonify({'success': False, 'message': f'File not found: {file_path}'})
-        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        # Use default (non-read-only) mode for accurate row counting; read-only
+        # can report inflated max_row when the sheet has trailing styling.
+        wb = openpyxl.load_workbook(file_path, data_only=True)
         ws = wb.active
-        headers = [str(c.value or '').strip() for c in next(ws.iter_rows(max_row=1))]
+        headers = [str(c.value or '').strip() for c in ws[1]]
         link_idx = next(
             (i + 1 for i, h in enumerate(headers)
              if h.strip().lower() == 'review live link'),
@@ -2430,16 +2432,29 @@ def profiles_live_check_preview():
             wb.close()
             return jsonify({'success': False,
                             'message': "Header 'Review Live Link' not found in the file."})
-        link_count = 0
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            v = row[link_idx - 1] if link_idx - 1 < len(row) else None
-            if v and str(v).strip():
-                link_count += 1
+        seen = set()
+        non_empty = 0
+        duplicates = 0
+        for r in range(2, ws.max_row + 1):
+            v = ws.cell(row=r, column=link_idx).value
+            if v is None:
+                continue
+            url = str(v).strip()
+            if not url:
+                continue
+            non_empty += 1
+            key = url.lower()
+            if key in seen:
+                duplicates += 1
+            else:
+                seen.add(key)
         wb.close()
         return jsonify({
             'success': True,
             'file_name': _P(file_path).name,
-            'total_links': link_count,
+            'total_links': non_empty,
+            'unique_links': len(seen),
+            'duplicates': duplicates,
             'header_column': headers[link_idx - 1],
         })
     except Exception as e:
@@ -2452,9 +2467,10 @@ def profiles_live_check_start():
     file_path = (body.get('file_path') or '').strip()
     workers = int(body.get('workers') or 5)
     timeout = int(body.get('timeout_sec') or 20)
+    show_browser = bool(body.get('show_browser', False))
     if not file_path:
         return jsonify({'success': False, 'message': 'file_path is required'}), 400
-    return jsonify(_live_check.start(file_path, workers, timeout, RESOURCES_PATH))
+    return jsonify(_live_check.start(file_path, workers, timeout, RESOURCES_PATH, show_browser))
 
 
 @app.route('/api/profiles/live-check/status', methods=['GET'])

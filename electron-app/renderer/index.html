@@ -900,9 +900,13 @@
                         <input type="number" id="liveCheckTimeout" value="20" min="5" max="120" style="width:100px;">
                     </div>
                 </div>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#cbd5e1;margin-bottom:8px;cursor:pointer;">
+                    <input type="checkbox" id="liveCheckShowBrowser">
+                    <span>Show browser window (so you can watch each link being checked)</span>
+                </label>
                 <div style="font-size:11px;color:#64748b;margin-top:-4px;margin-bottom:8px;">
                     <i class="fas fa-info-circle" style="margin-right:4px;"></i>
-                    Headless Chromium runs in an isolated temp folder that's auto-deleted after the run. Output Excel is saved next to the input.
+                    Browser temp data is auto-deleted after the run. Output Excel keeps every original column — only the <b>Status</b> column is filled in.
                 </div>
 
                 <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">

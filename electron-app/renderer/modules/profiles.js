@@ -1017,11 +1017,18 @@
             });
             const d = await r.json();
             if (d.success) {
+                const dup = d.duplicates || 0;
+                const uniq = d.unique_links != null ? d.unique_links : d.total_links;
+                let dupNote = '';
+                if (dup > 0) {
+                    dupNote = ` <span style="color:#f59e0b;">(${dup} duplicate${dup>1?'s':''} skipped)</span>`;
+                }
                 prev.innerHTML =
                     `<i class="fas fa-check-circle" style="color:#22c55e;"></i> ` +
                     `<b>${d.file_name}</b> — ` +
-                    `<b style="color:#22c55e;">${d.total_links}</b> links to check ` +
-                    `<span style="color:#64748b;">(column: "${d.header_column}")</span>`;
+                    `<b style="color:#22c55e;">${uniq}</b> unique links to check` +
+                    dupNote +
+                    ` <span style="color:#64748b;">(column: "${d.header_column}", ${d.total_links} total rows)</span>`;
             } else {
                 prev.innerHTML =
                     `<i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> ` +
@@ -1037,13 +1044,17 @@
         if (!filePath) { App.toast('Pick an Excel file first', 'error'); return; }
         const workers  = parseInt(_val('liveCheckWorkers'))  || 5;
         const timeout  = parseInt(_val('liveCheckTimeout'))  || 20;
+        const showBrowser = !!(document.getElementById('liveCheckShowBrowser') && document.getElementById('liveCheckShowBrowser').checked);
         const startBtn = _$('liveCheckStartBtn');
         if (startBtn) { startBtn.disabled = true; startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting…'; }
         try {
             const r = await fetch('http://localhost:5000/api/profiles/live-check/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ file_path: filePath, workers, timeout_sec: timeout }),
+                body: JSON.stringify({
+                    file_path: filePath, workers, timeout_sec: timeout,
+                    show_browser: showBrowser,
+                }),
             });
             const d = await r.json();
             if (!d.success) {

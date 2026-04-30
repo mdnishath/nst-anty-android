@@ -92,7 +92,7 @@ def cancel():
 
 
 def start(file_path: str, num_workers: int = 5, timeout_sec: int = 20,
-          resources_path: Path | None = None) -> dict:
+          resources_path: Path | None = None, show_browser: bool = False) -> dict:
     with _status_lock:
         if _status['running']:
             return {'success': False, 'message': 'Already running'}
@@ -102,7 +102,8 @@ def start(file_path: str, num_workers: int = 5, timeout_sec: int = 20,
 
     _cancel.clear()
     threading.Thread(
-        target=_worker, args=(file_path, num_workers, timeout_sec, resources_path),
+        target=_worker,
+        args=(file_path, num_workers, timeout_sec, resources_path, show_browser),
         daemon=True, name='live-status-check',
     ).start()
     return {'success': True}
@@ -113,7 +114,7 @@ def start(file_path: str, num_workers: int = 5, timeout_sec: int = 20,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _worker(file_path: str, num_workers: int, timeout_sec: int,
-            resources_path: Path | None):
+            resources_path: Path | None, show_browser: bool = False):
     import openpyxl
     global _status
 
@@ -162,24 +163,37 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
                                           "Add a column named exactly 'Review Live Link'.")
             return
 
+        # Use a SINGLE 'Status' column. Reuse existing one if the file
+        # already has 'Status' or 'Live Status', otherwise append it as
+        # the next column. No other columns are added — the output keeps
+        # every original cell intact and only this one is updated.
         status_col_idx = None
         for i, h in enumerate(headers, 1):
-            if h.lower() == 'live status':
+            if h.lower() in ('status', 'live status'):
                 status_col_idx = i
                 break
         if status_col_idx is None:
             status_col_idx = ws.max_column + 1
-            ws.cell(row=1, column=status_col_idx, value='Live Status')
-        checked_at_col = status_col_idx + 1
-        ws.cell(row=1, column=checked_at_col, value='Checked At')
+            ws.cell(row=1, column=status_col_idx, value='Status')
 
-        items: list[tuple[int, str]] = []
+        # Walk every row once and remember which row had which URL.
+        # We CHECK each unique URL only once, but at the end we write
+        # the verdict back to EVERY row that carried that URL — so the
+        # output keeps every original row intact (no dedup data loss).
+        all_rows: list[tuple[int, str]] = []      # (row_idx, url) every row
+        items: list[tuple[int, str]] = []         # (row_idx, url) unique
+        first_row_for_url: dict[str, int] = {}
         for r in range(2, ws.max_row + 1):
             v = ws.cell(row=r, column=link_col_idx).value
-            if not v:
+            if v is None:
                 continue
             url = str(v).strip()
-            if url:
+            if not url:
+                continue
+            all_rows.append((r, url))
+            key = url.lower()
+            if key not in first_row_for_url:
+                first_row_for_url[key] = r
                 items.append((r, url))
 
         with _status_lock:
@@ -189,16 +203,21 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
         try:
             asyncio.set_event_loop(loop)
             results = loop.run_until_complete(
-                _run_checks(items, num_workers, timeout_sec, tmp_root)
+                _run_checks(items, num_workers, timeout_sec, tmp_root, show_browser)
             )
         finally:
             try: loop.close()
             except Exception: pass
 
-        for row_idx, _, verdict in results:
+        # Build a url → verdict map then write only the Status cell on
+        # every row that had this URL. Nothing else in the workbook is
+        # changed.
+        verdict_by_url: dict[str, str] = {
+            url.lower(): verdict for (_, url, verdict) in results
+        }
+        for row_idx, url in all_rows:
+            verdict = verdict_by_url.get(url.lower(), 'Error')
             ws.cell(row=row_idx, column=status_col_idx, value=verdict)
-            ws.cell(row=row_idx, column=checked_at_col,
-                    value=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
         in_path = Path(file_path)
         out_name = f"{in_path.stem}_live_status_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -233,7 +252,8 @@ def _worker(file_path: str, num_workers: int, timeout_sec: int,
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _run_checks(items: list[tuple[int, str]], workers: int,
-                      timeout_sec: int, tmp_root: Path) -> list[tuple[int, str, str]]:
+                      timeout_sec: int, tmp_root: Path,
+                      show_browser: bool = False) -> list[tuple[int, str, str]]:
     from playwright.async_api import async_playwright
 
     sem = asyncio.Semaphore(max(1, workers))
@@ -249,7 +269,7 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
     async with async_playwright() as p:
         browser = await p.chromium.launch_persistent_context(
             user_data_dir=str(user_data),
-            headless=True,
+            headless=not show_browser,
             locale='en-US',
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
             extra_http_headers={'Accept-Language': 'en-US,en;q=0.9'},
