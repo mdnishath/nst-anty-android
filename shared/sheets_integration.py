@@ -483,11 +483,18 @@ def read_rows_by_status(resources_path, spreadsheet_id: str, tab_name: str,
                 'message': "Header 'Email' not found in the tab"}
     target = target_status.strip().lower()
     out = []
+    # Diagnostic: count every unique value seen in the Status column so
+    # the UI can show "what's actually in the column" when the filter
+    # returns 0 rows.
+    value_counts: dict[str, int] = {}
     for ri, row in enumerate(rows[1:], start=2):
-        st = ''
+        st_raw = ''
         if status_idx < len(row):
-            st = str(row[status_idx] or '').strip()
-        if st.lower() != target:
+            st_raw = str(row[status_idx] or '').strip()
+        if st_raw:
+            key = st_raw   # preserve case for the diagnostic
+            value_counts[key] = value_counts.get(key, 0) + 1
+        if st_raw.lower() != target:
             continue
         em = str(row[email_idx] or '').strip() if email_idx < len(row) else ''
         if not em:
@@ -496,12 +503,19 @@ def read_rows_by_status(resources_path, spreadsheet_id: str, tab_name: str,
         if link_idx is not None and link_idx < len(row):
             link = str(row[link_idx] or '').strip()
         out.append({'row': ri, 'email': em, 'link': link})
+    # Sort the value counts descending so the top values come first
+    sample_values = sorted(
+        ({'value': k, 'count': v} for k, v in value_counts.items()),
+        key=lambda x: -x['count'],
+    )[:10]
     return {
         'success': True,
         'status_col': status_idx + 1,
         'email_col': email_idx + 1,
         'link_col': (link_idx + 1) if link_idx is not None else None,
         'rows': out,
+        'status_header_used': str(headers[status_idx]) if status_idx < len(headers) else 'Status',
+        'unique_status_values': sample_values,
     }
 
 

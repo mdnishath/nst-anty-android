@@ -2028,6 +2028,18 @@
             if (d.not_found_count > 0) {
                 html += ` · <span style="color:#f59e0b;">${d.not_found_count} email${d.not_found_count>1?'s':''} not in profile manager</span>`;
             }
+            // If 0 'Missing' rows were found, show what values the Status
+            // column actually holds — usually reveals a different
+            // capitalisation or a typo (e.g. 'Misising', 'Not Live').
+            if (d.total_missing_rows === 0 && Array.isArray(d.unique_status_values) && d.unique_status_values.length > 0) {
+                const list = d.unique_status_values
+                    .map(v => `<code style="background:#1e293b;padding:1px 5px;border-radius:3px;">${_esc(v.value)}</code> ×${v.count}`)
+                    .join(', ');
+                const colName = d.status_header_used || 'Status';
+                html += `<div style="margin-top:6px;font-size:11px;color:#94a3b8;line-height:1.5;">` +
+                        `Looked at column <b>${_esc(colName)}</b>. Values found: ${list}` +
+                        `</div>`;
+            }
             info.innerHTML = html;
         } catch (e) {
             info.innerHTML = `<i class="fas fa-times-circle" style="color:#ef4444;"></i> ${_esc(e.message)}`;

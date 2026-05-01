@@ -2853,6 +2853,10 @@ def profiles_appeal_match_sheet():
         'matched_count': len(set(matched)),
         'not_found_count': len(set(not_found)),
         'not_found_sample': list(set(not_found))[:5],
+        # Diagnostic — surface which column was used + what values are
+        # actually present so a 0-match preview is debuggable from the UI.
+        'status_header_used': res.get('status_header_used'),
+        'unique_status_values': res.get('unique_status_values') or [],
     })
 
 
