@@ -1328,12 +1328,12 @@ def do_all_appeal_from_sheet(sheet_id: str, tab_name: str,
                              num_workers: int = 5,
                              resources_path=None,
                              target_status: str = 'Missing',
-                             write_back_status: str = 'Applead') -> dict:
+                             write_back_status: str = 'Appealed') -> dict:
     """Find rows in the given Google Sheet tab whose Status column equals
     *target_status* (default 'Missing'), match their Email column to
     existing profiles, run the standard Appeal flow on those profiles,
     and after each profile's appeal completes write *write_back_status*
-    (default 'Applead') to that row's Status column on the sheet.
+    (default 'Appealed') to that row's Status column on the sheet.
 
     The same _appeal_status dict the regular Do All Appeal feeds keeps
     powering the bottom-left progress popup, so the UI doesn't need any

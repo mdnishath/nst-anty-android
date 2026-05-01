@@ -2864,7 +2864,7 @@ def profiles_appeal_match_sheet():
 def profiles_appeal_start_from_sheet():
     """Run Do All Appeal on profiles whose email appears in rows of a
     Google Sheet tab where Status='Missing'. After each appeal finishes
-    its row is updated with 'Applead' (success) or 'Failed' (error)."""
+    its row is updated with 'Appealed' (success) or 'Failed' (error)."""
     body = request.get_json(silent=True) or {}
     sheet_id = (body.get('sheet_id') or '').strip()
     tab_name = (body.get('tab_name') or '').strip()
