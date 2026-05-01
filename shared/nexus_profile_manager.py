@@ -2897,6 +2897,23 @@ def do_all_appeal_profiles(num_workers: int = 5, **kwargs) -> dict:
     return _old_pm.do_all_appeal_profiles(num_workers, **kwargs)
 
 
+def do_all_appeal_from_sheet(sheet_id: str, tab_name: str,
+                             num_workers: int = 5,
+                             resources_path=None,
+                             **kwargs) -> dict:
+    """Thin wrapper — delegates to the actual implementation in
+    shared.profile_manager. server.py imports nexus_profile_manager
+    as `profile_manager`, so the new sheet-driven appeal entry has to
+    be exposed here too."""
+    from shared import profile_manager as _old_pm
+    _sync_state_to_old(_old_pm)
+    return _old_pm.do_all_appeal_from_sheet(
+        sheet_id=sheet_id, tab_name=tab_name,
+        num_workers=num_workers, resources_path=resources_path,
+        **kwargs,
+    )
+
+
 def get_appeal_status() -> dict:
     from shared import profile_manager as _old_pm
     _sync_state_to_old(_old_pm)
