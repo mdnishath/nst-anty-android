@@ -78,16 +78,22 @@ def _cred_path(resources_path) -> Path:
     return Path(resources_path) / 'config' / CRED_FILENAME
 
 
+_load_error: dict = {'msg': ''}   # populated when _load_creds fails
+
 def _load_creds(resources_path):
     """Load + refresh the cached OAuth credentials. Returns Credentials
-    object or None on any failure."""
+    object or None on any failure (with a human-readable reason cached
+    in _load_error)."""
+    _load_error['msg'] = ''
     try:
         from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
-    except Exception:
+    except Exception as e:
+        _load_error['msg'] = f'google libs missing: {type(e).__name__}: {e}'
         return None
     p = _token_path(resources_path)
     if not p.exists():
+        _load_error['msg'] = 'No sheets token — click Connect Google Sheets first.'
         return None
     try:
         creds = Credentials.from_authorized_user_file(str(p), SCOPES)
@@ -95,32 +101,46 @@ def _load_creds(resources_path):
             creds.refresh(Request())
             p.write_text(creds.to_json(), encoding='utf-8')
         return creds
-    except Exception:
+    except Exception as e:
+        _load_error['msg'] = f'token load failed: {type(e).__name__}: {e}'
         return None
 
 
+_build_error: dict = {'msg': ''}
+
 def _drive(resources_path):
     """Build a Google Drive v3 service."""
+    _build_error['msg'] = ''
     creds = _load_creds(resources_path)
     if not creds:
         return None
     try:
         from googleapiclient.discovery import build
         return build('drive', 'v3', credentials=creds, cache_discovery=False)
-    except Exception:
+    except Exception as e:
+        _build_error['msg'] = f'Drive build: {type(e).__name__}: {e}'
         return None
 
 
 def _sheets(resources_path):
     """Build a Google Sheets v4 service."""
+    _build_error['msg'] = ''
     creds = _load_creds(resources_path)
     if not creds:
         return None
     try:
         from googleapiclient.discovery import build
         return build('sheets', 'v4', credentials=creds, cache_discovery=False)
-    except Exception:
+    except Exception as e:
+        _build_error['msg'] = f'Sheets build: {type(e).__name__}: {e}'
         return None
+
+
+def _why_no_service() -> str:
+    """Human-readable reason the Drive/Sheets service couldn't be built.
+    Falls back to a generic 'not authorised' if both error slots empty."""
+    return (_build_error['msg'] or _load_error['msg']
+            or 'Sheets not authorized — click Connect Google Sheets.')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -176,7 +196,7 @@ def list_spreadsheets(resources_path, query: str = '', limit: int = 50) -> dict:
     drive = _drive(resources_path)
     if not drive:
         return {'success': False,
-                'message': 'Sheets not authorized. Click "Connect Google Sheets" first.',
+                'message': _why_no_service(),
                 'sheets': []}
     try:
         q_parts = [
@@ -215,7 +235,7 @@ def list_spreadsheets(resources_path, query: str = '', limit: int = 50) -> dict:
 def get_tabs(resources_path, spreadsheet_id: str) -> dict:
     s = _sheets(resources_path)
     if not s:
-        return {'success': False, 'message': 'Sheets not authorized.', 'tabs': []}
+        return {'success': False, 'message': _why_no_service(), 'tabs': []}
     try:
         meta = s.spreadsheets().get(
             spreadsheetId=spreadsheet_id,
@@ -235,7 +255,9 @@ def get_tabs(resources_path, spreadsheet_id: str) -> dict:
                 'spreadsheet_title': meta.get('properties', {}).get('title'),
                 'tabs': tabs}
     except Exception as e:
-        return {'success': False, 'message': f'Sheets read failed: {e}', 'tabs': []}
+        return {'success': False,
+                'message': f'Sheets read failed: {type(e).__name__}: {(str(e) or repr(e))[:200]}',
+                'tabs': []}
 
 
 def _quote_tab(tab: str) -> str:
@@ -250,7 +272,7 @@ def read_sheet(resources_path, spreadsheet_id: str, tab_name: str,
     WITHOUT the tab prefix (e.g. 'A1:Z' or '' for the whole tab)."""
     s = _sheets(resources_path)
     if not s:
-        return {'success': False, 'message': 'Sheets not authorized.'}
+        return {'success': False, 'message': _why_no_service()}
     try:
         if range_a1:
             r = f'{_quote_tab(tab_name)}!{range_a1}'
@@ -271,7 +293,7 @@ def write_range(resources_path, spreadsheet_id: str, range_a1: str,
     "Sheet1!A2:B10") with the given 2-D array."""
     s = _sheets(resources_path)
     if not s:
-        return {'success': False, 'message': 'Sheets not authorized.'}
+        return {'success': False, 'message': _why_no_service()}
     try:
         body = {'values': values}
         res = s.spreadsheets().values().update(
@@ -297,7 +319,7 @@ def append_rows(resources_path, spreadsheet_id: str, tab_name: str,
                 values: list[list]) -> dict:
     s = _sheets(resources_path)
     if not s:
-        return {'success': False, 'message': 'Sheets not authorized.'}
+        return {'success': False, 'message': _why_no_service()}
     try:
         res = s.spreadsheets().values().append(
             spreadsheetId=spreadsheet_id,
@@ -345,7 +367,7 @@ def batch_update_status(resources_path, spreadsheet_id: str, tab_name: str,
         return {'success': True, 'updated': 0}
     s = _sheets(resources_path)
     if not s:
-        return {'success': False, 'message': 'Sheets not authorized.'}
+        return {'success': False, 'message': _why_no_service()}
     from openpyxl.utils import get_column_letter
     col_letter = get_column_letter(status_col)
     data = []
