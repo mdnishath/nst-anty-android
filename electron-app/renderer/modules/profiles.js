@@ -1114,23 +1114,56 @@
         // Load tabs
         const tabGroup = _$('liveCheckTabGroup');
         const sel = _$('liveCheckTab');
+        const prev = _$('liveCheckPreview');
         if (tabGroup) tabGroup.style.display = 'block';
-        if (sel) sel.innerHTML = '<option>Loading…</option>';
+        if (sel) {
+            sel.innerHTML = '';
+            const opt = document.createElement('option');
+            opt.value = ''; opt.textContent = 'Loading tabs…'; opt.disabled = true;
+            sel.appendChild(opt);
+        }
         try {
             const r = await fetch(`http://localhost:5000/api/sheets/${encodeURIComponent(id)}/tabs`);
             const d = await r.json();
+            if (!d.success) {
+                if (sel) {
+                    sel.innerHTML = '';
+                    const opt = document.createElement('option');
+                    opt.value = ''; opt.textContent = '— No tabs (error) —'; opt.disabled = true;
+                    sel.appendChild(opt);
+                }
+                if (prev) {
+                    prev.style.display = 'block';
+                    prev.innerHTML = `<i class="fas fa-times-circle" style="color:#ef4444;"></i> ` +
+                        `Could not list tabs: ${d.message || 'unknown error'}`;
+                }
+                return;
+            }
+            const tabs = d.tabs || [];
             if (sel) {
                 sel.innerHTML = '';
-                (d.tabs || []).forEach(t => {
-                    const o = document.createElement('option');
-                    o.value = t.title; o.textContent = t.title;
-                    sel.appendChild(o);
-                });
+                if (tabs.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = ''; opt.textContent = '— No tabs found —'; opt.disabled = true;
+                    sel.appendChild(opt);
+                } else {
+                    tabs.forEach(t => {
+                        const o = document.createElement('option');
+                        o.value = t.title; o.textContent = t.title;
+                        sel.appendChild(o);
+                    });
+                    // Auto-select the first tab so the user doesn't have
+                    // to click. They can still change it via the dropdown.
+                    sel.value = tabs[0].title;
+                    _previewLiveCheckSheet();
+                }
             }
-            // Auto-preview the first tab
-            if ((d.tabs || []).length > 0) _previewLiveCheckSheet();
         } catch (e) {
             App.toast('Could not load tabs: ' + e.message, 'error');
+            if (prev) {
+                prev.style.display = 'block';
+                prev.innerHTML = `<i class="fas fa-times-circle" style="color:#ef4444;"></i> ${e.message}`;
+            }
         }
     }
 
