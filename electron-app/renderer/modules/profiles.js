@@ -1693,13 +1693,16 @@
             if (tabList) {
                 tabList.innerHTML = tabs.map(t => {
                     const tid = `wrTab_${btoa(unescape(encodeURIComponent(t))).replace(/[+/=]/g,'_')}`;
-                    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;cursor:pointer;">
-                        <input type="checkbox" class="wr-tab-cb" data-tab="${_esc(t)}" id="${tid}">
-                        <span style="font-size:12px;color:#e2e8f0;flex:1;">${_esc(t)}</span>
+                    // NOTE: row is a <div>, not a <label> — wrapping a number
+                    // input inside a <label> would let every click on the
+                    // input toggle the sibling checkbox, breaking typing.
+                    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;">
+                        <input type="checkbox" class="wr-tab-cb" data-tab="${_esc(t)}" id="${tid}" style="cursor:pointer;">
+                        <label for="${tid}" style="font-size:12px;color:#e2e8f0;flex:1;cursor:pointer;">${_esc(t)}</label>
                         <span data-summary="${_esc(t)}" style="font-size:11px;color:#64748b;">—</span>
                         <input type="number" class="wr-tab-count" data-tab="${_esc(t)}" placeholder="post"
-                               style="width:64px;background:#1a1a1a;border:1px solid #475569;border-radius:4px;padding:2px 6px;color:#e2e8f0;font-size:11px;display:none;" min="1">
-                    </label>`;
+                               style="width:64px;background:#1a1a1a;border:1px solid #475569;border-radius:4px;padding:2px 6px;color:#e2e8f0;font-size:11px;display:none;" min="1" value="1">
+                    </div>`;
                 }).join('');
                 tabList.querySelectorAll('.wr-tab-cb').forEach(cb => {
                     cb.addEventListener('change', () => _wrToggleTab(cb));
@@ -1782,12 +1785,16 @@
         const inp = document.querySelector(`input.wr-tab-count[data-tab="${cb.getAttribute('data-tab')}"]`);
         if (cb.checked) {
             _wrSelectedTabs.add(t);
-            if (inp) inp.style.display = '';
+            if (inp) {
+                inp.style.display = '';
+                if (!inp.value) inp.value = '1';
+                _wrTabCounts[t] = parseInt(inp.value, 10) || 1;
+            }
             _wrPreviewTabs();
         } else {
             _wrSelectedTabs.delete(t);
             delete _wrTabCounts[t];
-            if (inp) { inp.style.display = 'none'; inp.value = ''; }
+            if (inp) { inp.style.display = 'none'; }
             _wrUpdateSummary();
         }
     }
@@ -1819,11 +1826,12 @@
                         : `<span style="color:#22c55e;">${info.eligible_count} new</span>`
                           + `<span style="color:#64748b;"> · ${info.posted_count} done</span>`;
                 }
-                // Default the input count to eligible_count (capped 5 to be safe)
+                // Default the post count to 1 — user types in how many
+                // they actually want for the tab.
                 const inp = document.querySelector(`input.wr-tab-count[data-tab="${info.tab.replace(/"/g,'\\"')}"]`);
-                if (inp && !inp.value && info.eligible_count > 0) {
-                    inp.value = info.eligible_count;
-                    _wrTabCounts[info.tab] = info.eligible_count;
+                if (inp && !inp.value) {
+                    inp.value = '1';
+                    _wrTabCounts[info.tab] = 1;
                 }
             });
             _wrUpdateSummary(d);
