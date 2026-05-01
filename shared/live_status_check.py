@@ -656,20 +656,29 @@ async def _check_url(page, url: str, timeout_sec: int) -> str:
             pass
     await asyncio.sleep(3)
 
-    # PRIMARY CHECK — DU9Pgb star-rating container.
-    # Google's minified token "DU9Pgb" is used as a CLASS, not an id,
-    # on the live review's star-rating container. So we check the
-    # class form first, then any-attribute fallback in case Google
-    # changes how it uses the token.
-    DU9_SELECTORS = [
-        '.DU9Pgb',                  # most common — used as class
-        '#DU9Pgb',                  # in case it's ever an id
-        '[class*="DU9Pgb"]',        # token nested inside a multi-class string
-        '[jsname="DU9Pgb"]',        # sometimes Google emits the token as jsname
-        '[data-value="DU9Pgb"]',
+    # PRIMARY CHECK — star-rating container of a posted review.
+    # Two robust signals; the page only needs ONE of them to be Live.
+    #
+    # 1. The container with the minified class token 'DU9Pgb' —
+    #    Google currently emits it as a CSS class, sometimes nested
+    #    in a multi-class string or as a jsname attribute.
+    # 2. The star-rating widget itself: <span class="kvMYJc"
+    #    role="img" aria-label="N stars">. The aria-label is the
+    #    most stable signal because it's human-readable copy that
+    #    Google rarely renames; matching '* stars' covers
+    #    "1 star" through "5 stars".
+    LIVE_SIGNAL_SELECTORS = [
+        '.DU9Pgb',                              # class form
+        '[class*="DU9Pgb"]',                    # token in multi-class
+        '#DU9Pgb',                              # id (fallback)
+        '[jsname="DU9Pgb"]',                    # jsname (fallback)
+        'span.kvMYJc[aria-label*="stars"]',     # star-rating widget
+        'span.kvMYJc[aria-label*="star"]',      # 1-star variant
+        'span[role="img"][aria-label*="stars"]',
+        'span[role="img"][aria-label*="star"]',
     ]
     for _ in range(20):             # up to ~10s
-        for sel in DU9_SELECTORS:
+        for sel in LIVE_SIGNAL_SELECTORS:
             try:
                 count = await page.locator(sel).count()
                 if count > 0:
