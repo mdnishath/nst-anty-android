@@ -237,6 +237,25 @@ def _worker_sheet(sheet_id: str, tab_name: str, num_workers: int,
             return
         status_col = st_res['col']
 
+        # 2b. Read the EXISTING value of the Status column for every row
+        # so we can promote 'Applead' → 'Done' when the live check
+        # confirms the review is still live.
+        from openpyxl.utils import get_column_letter
+        status_col_letter = get_column_letter(status_col)
+        existing_status: dict[int, str] = {}
+        try:
+            sd = _si.read_sheet(resources_path, sheet_id, tab_name,
+                                f'{status_col_letter}2:{status_col_letter}')
+            if sd.get('success'):
+                for offset, row in enumerate(sd.get('values') or []):
+                    if not row:
+                        continue
+                    val = str(row[0] if row else '').strip()
+                    if val:
+                        existing_status[offset + 2] = val
+        except Exception:
+            pass
+
         # 3. Run the checks
         loop = asyncio.new_event_loop()
         try:
@@ -248,11 +267,24 @@ def _worker_sheet(sheet_id: str, tab_name: str, num_workers: int,
             try: loop.close()
             except Exception: pass
 
-        # 4. Mirror verdicts to all rows that had each URL, push to sheet
+        # 4. Mirror verdicts to all rows that had each URL, push to sheet.
+        # Status-promotion rules (per user spec):
+        #     existing 'Applead' + verdict 'Live'   → 'Done'
+        #     existing 'Live'    + verdict 'Live'   → 'Live' (unchanged)
+        #     existing 'Live'    + verdict 'Missing'→ 'Missing'
+        #     anything else                         → verdict as-is
         verdict_by_url = {url.lower(): v for (_, url, v) in results}
+
+        def _final_status(row_idx: int, verdict: str) -> str:
+            cur = (existing_status.get(row_idx, '') or '').strip().lower()
+            if cur == 'applead' and verdict == 'Live':
+                return 'Done'
+            return verdict
+
         row_updates: dict[int, str] = {}
         for row_idx, url in all_rows:
-            row_updates[row_idx] = verdict_by_url.get(url.lower(), 'Error')
+            verdict = verdict_by_url.get(url.lower(), 'Error')
+            row_updates[row_idx] = _final_status(row_idx, verdict)
 
         bu = _si.batch_update_status(
             resources_path, sheet_id, tab_name, status_col, row_updates,
