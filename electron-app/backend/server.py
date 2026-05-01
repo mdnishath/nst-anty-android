@@ -3062,6 +3062,68 @@ def profiles_health_status():
     return jsonify(profile_manager.get_health_status())
 
 
+# ── Write Review — Google Sheet mode ─────────────────────────────────────────
+from shared import sheet_review_orchestrator as _sheet_review
+
+
+@app.route('/api/profiles/write-review/sheet/preview', methods=['POST'])
+def profiles_write_review_sheet_preview():
+    """For a chosen list of tabs, return how many rows are eligible
+    to post (Status blank, has Review Text + Direct Review Link)
+    versus already-posted rows."""
+    body = request.get_json(silent=True) or {}
+    sheet_id = (body.get('sheet_id') or '').strip()
+    tabs = body.get('tabs') or []
+    if not sheet_id or not tabs:
+        return jsonify({'success': False,
+                        'message': 'sheet_id + tabs[] required'}), 400
+    return jsonify(_sheet_review.list_tabs_summary(
+        RESOURCES_PATH, sheet_id, [str(t) for t in tabs],
+    ))
+
+
+@app.route('/api/profiles/write-review/sheet/start', methods=['POST'])
+def profiles_write_review_sheet_start():
+    """Kick off Write Review from a Google Sheet workbook with one tab
+    per business. Body:
+        sheet_id     : str
+        tabs_config  : [{tab_name, count}]
+        workers      : int
+        profile_ids  : [str]  — which profiles will post (round-robin)"""
+    body = request.get_json(silent=True) or {}
+    sheet_id = (body.get('sheet_id') or '').strip()
+    tabs_config = body.get('tabs_config') or []
+    workers = int(body.get('workers') or 3)
+    profile_ids = body.get('profile_ids') or []
+    if not sheet_id or not tabs_config:
+        return jsonify({'success': False,
+                        'message': 'sheet_id + tabs_config required'}), 400
+    if not profile_ids:
+        return jsonify({'success': False,
+                        'message': 'profile_ids[] required — pick at least one profile'}), 400
+    result = profile_manager.do_write_review_from_sheet(
+        sheet_id=sheet_id, tabs_config=tabs_config,
+        num_workers=workers, resources_path=RESOURCES_PATH,
+        profile_ids=profile_ids,
+    )
+    if not result.get('success'):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route('/api/profiles/write-review/sheet/parse', methods=['POST'])
+def profiles_write_review_sheet_parse():
+    """Full parse of a single tab — returns eligible rows in order so
+    the start endpoint or a debug UI can show exactly what would run."""
+    body = request.get_json(silent=True) or {}
+    sheet_id = (body.get('sheet_id') or '').strip()
+    tab = (body.get('tab_name') or '').strip()
+    if not sheet_id or not tab:
+        return jsonify({'success': False,
+                        'message': 'sheet_id + tab_name required'}), 400
+    return jsonify(_sheet_review.parse_business_tab(RESOURCES_PATH, sheet_id, tab))
+
+
 @app.route('/api/profiles/do-write-review', methods=['POST'])
 def profiles_do_write_review():
     """Start Write Review operation from Excel file for matched profiles."""

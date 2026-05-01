@@ -1572,13 +1572,277 @@
     // ══════════════════════════════════════════════════════════════════════
 
     let _wrPreviewTimer = null;
+    let _wrSource = 'excel';                  // 'excel' | 'sheet'
+    let _wrSheetId = '';
+    let _wrSheetName = '';
+    let _wrSelectedTabs = new Set();          // tabs the user ticked
+    let _wrTabCounts = {};                    // {tab: posts_to_make}
+    let _wrSearchTimer = null;
 
     function openWriteReviewModal() {
         _$('writeReviewModalOverlay').style.display = 'flex';
         _setWRPreview(null);
+        _switchWRSource(_wrSource);
     }
 
     function closeWriteReviewModal() { _$('writeReviewModalOverlay').style.display = 'none'; }
+
+    function _switchWRSource(src) {
+        _wrSource = src;
+        const xb = _$('wrSrcExcel'), sb = _$('wrSrcSheet');
+        const xg = _$('wrExcelGroup'), sg = _$('wrSheetGroup');
+        const hint = _$('wrWorkerHint');
+        if (src === 'sheet') {
+            if (xb) xb.style = 'flex:1;background:transparent;color:#94a3b8;';
+            if (sb) sb.style = 'flex:1;background:rgba(245,158,11,0.18);';
+            if (xg) xg.style.display = 'none';
+            if (sg) sg.style.display = '';
+            if (hint) hint.textContent = 'Profiles auto-matched by the Email column on each sheet row.';
+            _wrRefreshSheetAuth();
+        } else {
+            if (xb) xb.style = 'flex:1;background:rgba(245,158,11,0.18);';
+            if (sb) sb.style = 'flex:1;background:transparent;color:#94a3b8;';
+            if (xg) xg.style.display = '';
+            if (sg) sg.style.display = 'none';
+            if (hint) hint.textContent = 'Profiles are matched automatically by email from the Excel file.';
+        }
+    }
+
+    async function _wrRefreshSheetAuth() {
+        try {
+            const r = await fetch('http://localhost:5000/api/sheets/status');
+            const s = await r.json();
+            const auth = _$('wrSheetAuth'), picker = _$('wrSheetPicker');
+            if (s.configured) {
+                if (auth) auth.style.display = 'none';
+                if (picker) picker.style.display = '';
+                _wrLoadSheetList();
+            } else {
+                if (auth) auth.style.display = '';
+                if (picker) picker.style.display = 'none';
+            }
+        } catch { /* ignore */ }
+    }
+
+    async function _wrAuthorize() {
+        const btn = _$('wrSheetAuthBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Waiting…'; }
+        try {
+            const r = await fetch('http://localhost:5000/api/sheets/authorize', { method: 'POST' });
+            const d = await r.json();
+            if (d.success) { App.toast('Connected ✓', 'success'); _wrRefreshSheetAuth(); }
+            else App.toast(d.message || 'Auth failed', 'error');
+        } catch (e) { App.toast(e.message, 'error'); }
+        finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-key"></i> Connect'; }
+        }
+    }
+
+    async function _wrLoadSheetList() {
+        const list = _$('wrSheetList');
+        if (!list) return;
+        const q = (_$('wrSheetSearch') || {}).value || '';
+        list.innerHTML = '<div style="padding:14px;text-align:center;color:#64748b;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> Loading…</div>';
+        try {
+            const url = 'http://localhost:5000/api/sheets/list' + (q ? `?q=${encodeURIComponent(q)}` : '');
+            const r = await fetch(url);
+            const d = await r.json();
+            if (!d.success) {
+                list.innerHTML = `<div style="padding:14px;color:#fca5a5;font-size:12px;">${_esc(d.message)}</div>`;
+                return;
+            }
+            const sheets = d.sheets || [];
+            list.innerHTML = sheets.map(s => {
+                const isSel = s.id === _wrSheetId ? 'background:rgba(245,158,11,0.18);' : '';
+                return `<div class="wr-s-row" data-id="${_esc(s.id)}" data-name="${_esc(s.name||'')}"
+                    style="padding:7px 10px;border-bottom:1px solid #1e293b;cursor:pointer;${isSel}">
+                    <div style="font-size:12px;color:#e2e8f0;">${_esc(s.name||'(unnamed)')}</div>
+                </div>`;
+            }).join('');
+            list.querySelectorAll('.wr-s-row').forEach(el => {
+                el.addEventListener('click', () => _wrPickSheet(
+                    el.getAttribute('data-id'), el.getAttribute('data-name')
+                ));
+            });
+        } catch (e) {
+            list.innerHTML = `<div style="padding:14px;color:#fca5a5;font-size:12px;">${_esc(e.message)}</div>`;
+        }
+    }
+
+    async function _wrPickSheet(id, name) {
+        _wrSheetId = id; _wrSheetName = name || '';
+        _wrSelectedTabs.clear(); _wrTabCounts = {};
+        // Refresh profile list whenever a new sheet is picked so the
+        // user sees up-to-date profile data.
+        _wrLoadProfileList();
+        document.querySelectorAll('#wrSheetList .wr-s-row').forEach(el => {
+            el.style.background = el.getAttribute('data-id') === id
+                ? 'rgba(245,158,11,0.18)' : 'transparent';
+        });
+        const block = _$('wrTabBlock'); if (block) block.style.display = '';
+        const tabList = _$('wrTabList'); if (tabList)
+            tabList.innerHTML = '<div style="padding:10px;color:#64748b;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> Loading tabs…</div>';
+        try {
+            const r = await fetch(`http://localhost:5000/api/sheets/${encodeURIComponent(id)}/tabs`);
+            const d = await r.json();
+            if (!d.success) {
+                if (tabList) tabList.innerHTML = `<div style="padding:10px;color:#fca5a5;font-size:12px;">${_esc(d.message)}</div>`;
+                return;
+            }
+            const tabs = (d.tabs || []).map(t => t.title);
+            if (tabList) {
+                tabList.innerHTML = tabs.map(t => {
+                    const tid = `wrTab_${btoa(unescape(encodeURIComponent(t))).replace(/[+/=]/g,'_')}`;
+                    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;cursor:pointer;">
+                        <input type="checkbox" class="wr-tab-cb" data-tab="${_esc(t)}" id="${tid}">
+                        <span style="font-size:12px;color:#e2e8f0;flex:1;">${_esc(t)}</span>
+                        <span data-summary="${_esc(t)}" style="font-size:11px;color:#64748b;">—</span>
+                        <input type="number" class="wr-tab-count" data-tab="${_esc(t)}" placeholder="post"
+                               style="width:64px;background:#1a1a1a;border:1px solid #475569;border-radius:4px;padding:2px 6px;color:#e2e8f0;font-size:11px;display:none;" min="1">
+                    </label>`;
+                }).join('');
+                tabList.querySelectorAll('.wr-tab-cb').forEach(cb => {
+                    cb.addEventListener('change', () => _wrToggleTab(cb));
+                });
+                tabList.querySelectorAll('.wr-tab-count').forEach(inp => {
+                    inp.addEventListener('input', () => {
+                        const t = inp.getAttribute('data-tab');
+                        const v = parseInt(inp.value, 10);
+                        if (!isNaN(v) && v > 0) _wrTabCounts[t] = v;
+                        else delete _wrTabCounts[t];
+                    });
+                });
+            }
+        } catch (e) {
+            if (tabList) tabList.innerHTML = `<div style="padding:10px;color:#fca5a5;font-size:12px;">${_esc(e.message)}</div>`;
+        }
+    }
+
+    let _wrSelectedProfiles = new Set();
+    let _wrAllProfiles = [];
+
+    async function _wrLoadProfileList() {
+        const list = _$('wrProfileList');
+        if (!list) return;
+        list.innerHTML = '<div style="padding:10px;color:#64748b;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> Loading profiles…</div>';
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles');
+            const d = await r.json();
+            _wrAllProfiles = (d.profiles || d || [])
+                .filter(p => p.email)
+                .sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+            _wrRenderProfileList();
+        } catch (e) {
+            list.innerHTML = `<div style="padding:10px;color:#fca5a5;font-size:12px;">${_esc(e.message)}</div>`;
+        }
+    }
+
+    function _wrRenderProfileList() {
+        const list = _$('wrProfileList');
+        if (!list) return;
+        const q = ((_$('wrProfileSearch') || {}).value || '').toLowerCase().trim();
+        const filtered = !q ? _wrAllProfiles
+            : _wrAllProfiles.filter(p =>
+                (p.email || '').toLowerCase().includes(q) ||
+                (p.name || '').toLowerCase().includes(q));
+        if (!filtered.length) {
+            list.innerHTML = '<div style="padding:10px;text-align:center;color:#64748b;font-size:12px;">No profiles match.</div>';
+            return;
+        }
+        list.innerHTML = filtered.map(p => {
+            const checked = _wrSelectedProfiles.has(p.id) ? 'checked' : '';
+            const grp = p.group ? `<span style="color:#64748b;">· ${_esc(p.group)}</span>` : '';
+            const status = p.status === 'logged_in'
+                ? '<span style="color:#22c55e;font-size:10px;">●</span>'
+                : '<span style="color:#64748b;font-size:10px;">○</span>';
+            return `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;cursor:pointer;">
+                <input type="checkbox" class="wr-prof-cb" data-id="${_esc(p.id)}" ${checked}>
+                ${status}
+                <span style="font-size:12px;color:#e2e8f0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(p.email)}</span>
+                ${grp}
+            </label>`;
+        }).join('');
+        list.querySelectorAll('.wr-prof-cb').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const id = cb.getAttribute('data-id');
+                if (cb.checked) _wrSelectedProfiles.add(id);
+                else _wrSelectedProfiles.delete(id);
+                _wrUpdateProfileCount();
+            });
+        });
+    }
+
+    function _wrUpdateProfileCount() {
+        const el = _$('wrProfileCount');
+        if (el) el.textContent = `${_wrSelectedProfiles.size} selected`;
+    }
+
+    function _wrToggleTab(cb) {
+        const t = cb.getAttribute('data-tab');
+        const inp = document.querySelector(`input.wr-tab-count[data-tab="${cb.getAttribute('data-tab')}"]`);
+        if (cb.checked) {
+            _wrSelectedTabs.add(t);
+            if (inp) inp.style.display = '';
+            _wrPreviewTabs();
+        } else {
+            _wrSelectedTabs.delete(t);
+            delete _wrTabCounts[t];
+            if (inp) { inp.style.display = 'none'; inp.value = ''; }
+            _wrUpdateSummary();
+        }
+    }
+
+    async function _wrPreviewTabs() {
+        const tabs = Array.from(_wrSelectedTabs);
+        if (tabs.length === 0) { _wrUpdateSummary(); return; }
+        const summaryEl = _$('wrTabSummary');
+        if (summaryEl) {
+            summaryEl.style.display = '';
+            summaryEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reading tabs…';
+        }
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/write-review/sheet/preview', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sheet_id: _wrSheetId, tabs }),
+            });
+            const d = await r.json();
+            if (!d.success) {
+                if (summaryEl) summaryEl.innerHTML = `<i class="fas fa-times-circle"></i> ${_esc(d.message)}`;
+                return;
+            }
+            // Update per-tab count badges + auto-fill default count = eligible
+            (d.tabs || []).forEach(info => {
+                const badge = document.querySelector(`[data-summary="${info.tab.replace(/"/g,'\\"')}"]`);
+                if (badge) {
+                    badge.innerHTML = info.error
+                        ? `<span style="color:#ef4444;">err</span>`
+                        : `<span style="color:#22c55e;">${info.eligible_count} new</span>`
+                          + `<span style="color:#64748b;"> · ${info.posted_count} done</span>`;
+                }
+                // Default the input count to eligible_count (capped 5 to be safe)
+                const inp = document.querySelector(`input.wr-tab-count[data-tab="${info.tab.replace(/"/g,'\\"')}"]`);
+                if (inp && !inp.value && info.eligible_count > 0) {
+                    inp.value = info.eligible_count;
+                    _wrTabCounts[info.tab] = info.eligible_count;
+                }
+            });
+            _wrUpdateSummary(d);
+        } catch (e) {
+            if (summaryEl) summaryEl.innerHTML = `<i class="fas fa-times-circle"></i> ${_esc(e.message)}`;
+        }
+    }
+
+    function _wrUpdateSummary(data) {
+        const summaryEl = _$('wrTabSummary');
+        if (!summaryEl) return;
+        const tabs = Array.from(_wrSelectedTabs);
+        if (!tabs.length) { summaryEl.style.display = 'none'; return; }
+        const total = tabs.reduce((s, t) => s + (_wrTabCounts[t] || 0), 0);
+        summaryEl.style.display = '';
+        summaryEl.innerHTML =
+            `<b>${tabs.length}</b> tab${tabs.length===1?'':'s'} selected · ` +
+            `<b>${total}</b> review${total===1?'':'s'} planned to post`;
+    }
 
     function _setWRPreview(info) {
         const el = _$('writeReviewPreview');
@@ -1612,9 +1876,52 @@
     }
 
     async function startWriteReview() {
+        const workers = parseInt(_$('writeReviewWorkers') ? _$('writeReviewWorkers').value : '3') || 3;
+
+        // Sheet mode
+        if (_wrSource === 'sheet') {
+            if (!_wrSheetId) { App.toast('Pick a Google Sheet first', 'error'); return; }
+            const tabs_config = Array.from(_wrSelectedTabs)
+                .filter(t => (_wrTabCounts[t] || 0) > 0)
+                .map(t => ({ tab_name: t, count: _wrTabCounts[t] }));
+            if (!tabs_config.length) {
+                App.toast('Tick at least one tab and set a post count', 'error');
+                return;
+            }
+            const profile_ids = Array.from(_wrSelectedProfiles);
+            if (profile_ids.length === 0) {
+                App.toast('Pick at least one profile that will post', 'error');
+                return;
+            }
+            closeWriteReviewModal();
+            try {
+                const data = await _api('/api/profiles/write-review/sheet/start', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        sheet_id: _wrSheetId,
+                        tabs_config,
+                        workers,
+                        profile_ids,
+                    })
+                });
+                if (data.success) {
+                    App.toast(
+                        `Write Review started: ${data.total_planned} review(s) ` +
+                        `across ${data.tabs} tab(s)`, 'success'
+                    );
+                    _startOpProgress('review');
+                } else {
+                    App.toast(data.message || data.error || 'Failed to start', 'error');
+                }
+            } catch (e) {
+                App.toast('Write Review error: ' + e.message, 'error');
+            }
+            return;
+        }
+
+        // Excel mode (existing flow)
         const filePath = (_$('writeReviewFilePath') ? _$('writeReviewFilePath').value : '').trim();
         if (!filePath) { App.toast('Select an Excel file first', 'error'); return; }
-        const workers = parseInt(_$('writeReviewWorkers') ? _$('writeReviewWorkers').value : '3') || 3;
         closeWriteReviewModal();
         try {
             const data = await _api('/api/profiles/do-write-review', {
@@ -3439,6 +3746,43 @@
         _btn('writeReviewCloseBtn', closeWriteReviewModal);
         _btn('writeReviewCancelBtn', closeWriteReviewModal);
         _btn('writeReviewStartBtn', startWriteReview);
+        // Sheet mode controls
+        _btn('wrSrcExcel', () => _switchWRSource('excel'));
+        _btn('wrSrcSheet', () => _switchWRSource('sheet'));
+        _btn('wrSheetAuthBtn', _wrAuthorize);
+        _btn('wrSheetRefreshBtn', _wrLoadSheetList);
+        const wrss = _$('wrSheetSearch');
+        if (wrss) wrss.addEventListener('input', () => {
+            if (_wrSearchTimer) clearTimeout(_wrSearchTimer);
+            _wrSearchTimer = setTimeout(_wrLoadSheetList, 350);
+        });
+        _btn('wrSelectAllTabsBtn', () => {
+            document.querySelectorAll('#wrTabList .wr-tab-cb').forEach(cb => {
+                if (!cb.checked) { cb.checked = true; _wrToggleTab(cb); }
+            });
+        });
+        _btn('wrSelectNoneTabsBtn', () => {
+            document.querySelectorAll('#wrTabList .wr-tab-cb').forEach(cb => {
+                if (cb.checked) { cb.checked = false; _wrToggleTab(cb); }
+            });
+        });
+        const wrPS = _$('wrProfileSearch');
+        if (wrPS) wrPS.addEventListener('input', _wrRenderProfileList);
+        _btn('wrSelectAllProfilesBtn', () => {
+            // Add every profile currently in the (filtered) list view
+            document.querySelectorAll('#wrProfileList .wr-prof-cb').forEach(cb => {
+                cb.checked = true;
+                _wrSelectedProfiles.add(cb.getAttribute('data-id'));
+            });
+            _wrUpdateProfileCount();
+        });
+        _btn('wrSelectNoProfilesBtn', () => {
+            _wrSelectedProfiles.clear();
+            document.querySelectorAll('#wrProfileList .wr-prof-cb').forEach(cb => {
+                cb.checked = false;
+            });
+            _wrUpdateProfileCount();
+        });
         _btn('writeReviewBrowseBtn', async () => { await browseFile('writeReviewFilePath'); _previewWRFile(); });
 
         // GMB → Review URL

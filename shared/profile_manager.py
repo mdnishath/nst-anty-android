@@ -1324,6 +1324,265 @@ def _batch_login_worker(accounts: list[dict], num_workers: int,
 
 # ── Do All Appeal ────────────────────────────────────────────────────────────
 
+def do_write_review_from_sheet(
+    sheet_id: str,
+    tabs_config: list[dict],
+    num_workers: int = 3,
+    resources_path=None,
+    profile_ids: list[str] | None = None,
+) -> dict:
+    """Sheet-driven Write Review.
+
+    tabs_config = [{tab_name: 'Business1', count: 5}, …]
+
+    For every tab we take *count* eligible rows in order (Status blank,
+    has Review Text + Direct Review Link), match each row's Email column
+    to an existing profile, post the review using the existing
+    _run_write_review_for_profile flow, and write back to the sheet:
+      Date              → today
+      Review Live Link  → captured share link (if any)
+      Status            → 'Live' on success, 'Failed' otherwise
+      Email             → email actually used
+      Notes             → star count from the row's Notes value
+      Worker            → worker id
+    On success the profile's group is moved to 'Posted'.
+    """
+    from shared import sheet_review_orchestrator as _sro
+    from shared import sheets_integration as _si
+    global _review_status
+
+    if _review_status.get('running'):
+        return {'success': False, 'error': 'Write Review is already running'}
+    if not sheet_id or not tabs_config:
+        return {'success': False, 'error': 'sheet_id + tabs_config required'}
+
+    plan = _sro.plan_run(resources_path, sheet_id, tabs_config)
+    if not plan.get('success'):
+        return {'success': False, 'error': plan.get('message') or 'plan failed'}
+
+    # Flatten plan into a single work list with tab context per item.
+    work: list[dict] = []
+    for tab_block in plan.get('tabs') or []:
+        if tab_block.get('error'):
+            continue
+        cols = tab_block.get('columns') or {}
+        gmb_url = tab_block.get('gmb_url') or ''
+        for r in tab_block.get('rows') or []:
+            work.append({
+                'tab':              tab_block['tab'],
+                'business_name':    tab_block.get('business_name'),
+                'gmb_url':          gmb_url,
+                'sheet_row':        r['row'],
+                'review_text':      r.get('review_text', ''),
+                'direct_link':      r.get('direct_review_link', ''),
+                'email':            r.get('email', ''),
+                'stars':            _parse_star_count(r.get('notes', '')),
+                'columns':          cols,
+            })
+
+    if not work:
+        return {'success': False, 'error': 'No eligible rows to post in any tab'}
+
+    # Resolve which profiles will post.
+    profiles_all = _read_profiles()
+    if profile_ids:
+        # User-picked: use exactly these profiles, round-robin.
+        prof_by_id = {p['id']: p for p in profiles_all}
+        chosen = [prof_by_id[i] for i in profile_ids if i in prof_by_id]
+        if not chosen:
+            return {'success': False,
+                    'error': 'None of the selected profile IDs match the local registry.'}
+        matched_work = []
+        for idx, w in enumerate(work):
+            prof = chosen[idx % len(chosen)]
+            w['profile'] = prof
+            # Use the profile's own email — it'll be written back to the
+            # row's Email column so the sheet records who actually posted.
+            w['email'] = prof.get('email') or w.get('email')
+            matched_work.append(w)
+        unmatched_emails = []
+    else:
+        # Fallback: legacy email-matching behaviour.
+        by_email = {(p.get('email') or '').strip().lower(): p for p in profiles_all}
+        matched_work = []
+        unmatched_emails = []
+        for w in work:
+            em = (w.get('email') or '').strip().lower()
+            prof = by_email.get(em) if em else None
+            if not prof:
+                unmatched_emails.append(em or '(blank)')
+                continue
+            w['profile'] = prof
+            matched_work.append(w)
+        if not matched_work:
+            return {'success': False,
+                    'error': "No row's email matched an existing profile.",
+                    'unmatched_sample': unmatched_emails[:5]}
+
+    num_workers = max(1, num_workers)
+    _log(f"[REVIEW][SHEET] Posting {len(matched_work)} review(s) "
+         f"({len(plan.get('tabs') or [])} tab(s), {num_workers} workers)")
+
+    _review_status = {
+        'running': True,
+        'progress': 'Starting...',
+        'done': 0,
+        'total': len(matched_work),
+        'results': [],
+        'report_path': '',
+        'sheet_id': sheet_id,
+    }
+
+    threading.Thread(
+        target=_sheet_review_worker,
+        args=(matched_work, num_workers, sheet_id, resources_path),
+        daemon=True, name='sheet-write-review',
+    ).start()
+
+    return {
+        'success': True,
+        'total_planned': len(matched_work),
+        'unmatched': len(unmatched_emails),
+        'tabs': len([t for t in plan.get('tabs') or [] if t.get('rows')]),
+    }
+
+
+def _parse_star_count(notes_value: str) -> int:
+    """Best-effort: pull a star count out of a Notes cell. The sheet
+    typically has '5', '5★', '★★★★★' or '5 stars'. Defaults to 5."""
+    if not notes_value:
+        return 5
+    s = str(notes_value).strip()
+    if s.isdigit():
+        n = int(s)
+        return max(1, min(5, n))
+    # Count star glyphs
+    star_count = sum(s.count(g) for g in ('★', '⭐', '*'))
+    if star_count:
+        return max(1, min(5, star_count))
+    # Pull first digit
+    for ch in s:
+        if ch.isdigit():
+            return max(1, min(5, int(ch)))
+    return 5
+
+
+def _sheet_review_worker(
+    work_items: list[dict], num_workers: int,
+    sheet_id: str, resources_path,
+):
+    """Background worker for sheet-driven Write Review."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from shared import sheets_integration as _si
+    global _review_status
+
+    done_count = 0
+    results = []
+    lock = threading.Lock()
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    def _run_one(item: dict, worker_id: int) -> dict:
+        nonlocal done_count
+        prof = item['profile']
+        email = prof.get('email', '')
+        review_data = {
+            'gmb_url':     item.get('gmb_url'),
+            'review_url':  item.get('direct_link'),
+            'review_text': item.get('review_text'),
+            'stars':       item.get('stars', 5),
+        }
+        outcome = {'success': False, 'review_status': 'error',
+                   'summary': 'not run', 'share_link': ''}
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                outcome = loop.run_until_complete(
+                    _run_write_review_for_profile(prof, review_data, worker_id)
+                )
+            finally:
+                try: loop.close()
+                except Exception: pass
+        except Exception as e:
+            outcome = {'success': False, 'review_status': 'error',
+                       'summary': f'Error: {str(e)[:120]}', 'share_link': ''}
+
+        # Build per-cell write-back dict for this row
+        cols = item.get('columns') or {}
+        row = item.get('sheet_row')
+        ok = bool(outcome.get('success'))
+        verdict_status = 'Live' if ok else 'Failed'
+        cell_writes = {}
+        if cols.get('date') and row:
+            cell_writes[(row, cols['date'])] = today
+        if cols.get('review_live_link') and row and outcome.get('share_link'):
+            cell_writes[(row, cols['review_live_link'])] = outcome.get('share_link')
+        if cols.get('status') and row:
+            cell_writes[(row, cols['status'])] = verdict_status
+        if cols.get('email') and row and email:
+            cell_writes[(row, cols['email'])] = email
+        if cols.get('notes') and row:
+            cell_writes[(row, cols['notes'])] = item.get('stars', 5)
+        if cols.get('worker') and row:
+            cell_writes[(row, cols['worker'])] = f'W{worker_id}'
+
+        # Push the writes — one row at a time so the sheet updates live
+        for (rr, cc), val in cell_writes.items():
+            try:
+                _si.update_cell(resources_path, sheet_id,
+                                item.get('tab'), rr, cc, val)
+            except Exception as _w_err:
+                _log(f"[REVIEW][SHEET] sheet write {rr},{cc}: {_w_err}", 'warning')
+
+        # Move profile to "Posted" group on success
+        if ok:
+            try:
+                update_profile(prof['id'], group='Posted')
+            except Exception:
+                pass
+            try:
+                from shared.nexus_profile_manager import update_profile as _npm_update
+                _npm_update(prof['id'], group='Posted')
+            except Exception:
+                pass
+
+        with lock:
+            done_count += 1
+            _review_status['done'] = done_count
+            _review_status['progress'] = f'{done_count}/{_review_status["total"]}'
+
+        return {
+            'tab': item.get('tab'),
+            'row': row,
+            'email': email,
+            'business_name': item.get('business_name'),
+            'success': ok,
+            'share_link': outcome.get('share_link'),
+            'summary': outcome.get('summary', ''),
+        }
+
+    with ThreadPoolExecutor(max_workers=num_workers,
+                            thread_name_prefix='sheet-review') as pool:
+        futs = {}
+        for idx, item in enumerate(work_items):
+            wid = (idx % num_workers) + 1
+            futs[pool.submit(_run_one, item, wid)] = item
+        for fut in as_completed(futs):
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                _log(f"[REVIEW][SHEET] worker exception: {e}", 'error')
+
+    success = sum(1 for r in results if r.get('success'))
+    _log(f"[REVIEW][SHEET] Complete: {success}/{len(results)} posted", 'success')
+
+    _review_status['running'] = False
+    _review_status['results'] = results
+    _review_status['report_path'] = (
+        f"Wrote {success}/{len(results)} review(s) back to sheet"
+    )
+
+
 def do_all_appeal_from_sheet(sheet_id: str, tab_name: str,
                              num_workers: int = 5,
                              resources_path=None,

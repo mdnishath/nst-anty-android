@@ -2897,6 +2897,19 @@ def do_all_appeal_profiles(num_workers: int = 5, **kwargs) -> dict:
     return _old_pm.do_all_appeal_profiles(num_workers, **kwargs)
 
 
+def do_write_review_from_sheet(sheet_id: str, tabs_config: list,
+                               num_workers: int = 3,
+                               resources_path=None, **kwargs) -> dict:
+    """Thin wrapper — delegates to shared.profile_manager."""
+    from shared import profile_manager as _old_pm
+    _sync_state_to_old(_old_pm)
+    return _old_pm.do_write_review_from_sheet(
+        sheet_id=sheet_id, tabs_config=tabs_config,
+        num_workers=num_workers, resources_path=resources_path,
+        **kwargs,
+    )
+
+
 def do_all_appeal_from_sheet(sheet_id: str, tab_name: str,
                              num_workers: int = 5,
                              resources_path=None,
