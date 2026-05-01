@@ -1512,27 +1512,59 @@ def _sheet_review_worker(
         row = item.get('sheet_row')
         ok = bool(outcome.get('success'))
         verdict_status = 'Live' if ok else 'Failed'
-        cell_writes = {}
-        if cols.get('date') and row:
-            cell_writes[(row, cols['date'])] = today
-        if cols.get('review_live_link') and row and outcome.get('share_link'):
-            cell_writes[(row, cols['review_live_link'])] = outcome.get('share_link')
-        if cols.get('status') and row:
-            cell_writes[(row, cols['status'])] = verdict_status
-        if cols.get('email') and row and email:
-            cell_writes[(row, cols['email'])] = email
-        if cols.get('notes') and row:
-            cell_writes[(row, cols['notes'])] = item.get('stars', 5)
-        if cols.get('worker') and row:
-            cell_writes[(row, cols['worker'])] = f'W{worker_id}'
 
-        # Push the writes — one row at a time so the sheet updates live
-        for (rr, cc), val in cell_writes.items():
+        _log(f"[REVIEW][SHEET][W{worker_id}] {email}: outcome ok={ok} "
+             f"share_link={'set' if outcome.get('share_link') else 'none'} "
+             f"row={row} tab={item.get('tab')!r}")
+
+        if not row:
+            _log(f"[REVIEW][SHEET][W{worker_id}] sheet_row missing — skipping write-back", 'warning')
+            with lock:
+                done_count += 1
+                _review_status['done'] = done_count
+                _review_status['progress'] = f'{done_count}/{_review_status["total"]}'
+            return {
+                'tab': item.get('tab'), 'row': row, 'email': email,
+                'business_name': item.get('business_name'),
+                'success': ok, 'share_link': outcome.get('share_link'),
+                'summary': outcome.get('summary', ''),
+            }
+
+        if not cols:
+            _log(f"[REVIEW][SHEET][W{worker_id}] columns mapping missing — sheet "
+                 f"will not be updated for row {row}", 'warning')
+
+        # Use batch update so a single API call writes every column
+        from openpyxl.utils import get_column_letter as _gcl
+        batch_data = []
+        def _add(col_idx, value):
+            if not col_idx or value is None:
+                return
+            tab = item.get('tab') or ''
+            tab_q = "'" + tab.replace("'", "''") + "'"
+            a1 = f'{tab_q}!{_gcl(col_idx)}{row}'
+            batch_data.append((a1, value))
+
+        _add(cols.get('date'), today)
+        if outcome.get('share_link'):
+            _add(cols.get('review_live_link'), outcome.get('share_link'))
+        _add(cols.get('status'), verdict_status)
+        if email:
+            _add(cols.get('email'), email)
+        _add(cols.get('notes'), item.get('stars', 5))
+        _add(cols.get('worker'), f'W{worker_id}')
+
+        _log(f"[REVIEW][SHEET][W{worker_id}] writing {len(batch_data)} cell(s) for row {row}")
+        for a1, val in batch_data:
             try:
-                _si.update_cell(resources_path, sheet_id,
-                                item.get('tab'), rr, cc, val)
+                res = _si.write_range(resources_path, sheet_id, a1, [[val]])
+                if not res.get('success'):
+                    _log(f"[REVIEW][SHEET][W{worker_id}] write FAILED {a1}: "
+                         f"{res.get('message')}", 'error')
+                else:
+                    _log(f"[REVIEW][SHEET][W{worker_id}] wrote {a1} = {str(val)[:60]}")
             except Exception as _w_err:
-                _log(f"[REVIEW][SHEET] sheet write {rr},{cc}: {_w_err}", 'warning')
+                _log(f"[REVIEW][SHEET][W{worker_id}] write exception {a1}: {_w_err}", 'error')
 
         # Move profile to "Posted" group on success
         if ok:
