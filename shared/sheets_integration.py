@@ -257,9 +257,10 @@ def list_spreadsheets(resources_path, query: str = '', limit: int = 50) -> dict:
             esc = query.replace("'", "\\'")
             q_parts.append(f"name contains '{esc}'")
         q = ' and '.join(q_parts)
+        # No spaces after commas — Google's field-mask parser rejects them.
         res = drive.files().list(
             q=q, orderBy='modifiedTime desc', pageSize=limit,
-            fields='files(id, name, modifiedTime, owners(displayName, emailAddress))',
+            fields='files(id,name,modifiedTime,owners(displayName,emailAddress))',
         ).execute()
         files = res.get('files') or []
         out = []
@@ -286,9 +287,11 @@ def get_tabs(resources_path, spreadsheet_id: str) -> dict:
     if not s:
         return {'success': False, 'message': _why_no_service(), 'tabs': []}
     try:
+        # NOTE: Google's field-mask parser rejects spaces after commas.
+        # Use the exact form 'properties.title,sheets.properties' — no whitespace.
         meta = s.spreadsheets().get(
             spreadsheetId=spreadsheet_id,
-            fields='properties.title, sheets.properties',
+            fields='properties.title,sheets.properties',
         ).execute()
         tabs = []
         for sh in meta.get('sheets') or []:
