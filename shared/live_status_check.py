@@ -269,21 +269,25 @@ def _worker_sheet(sheet_id: str, tab_name: str, num_workers: int,
 
         # 4. Mirror verdicts to all rows that had each URL, push to sheet.
         # Status-transition rules (per user spec):
-        #     existing 'Applead' + verdict 'Live'    → 'Done'
-        #     existing 'Applead' + verdict 'Missing' → 'Applead' (unchanged)
-        #     existing 'Live'    + verdict 'Live'    → 'Live'    (unchanged)
-        #     existing 'Live'    + verdict 'Missing' → 'Missing'
-        #     anything else                          → verdict as-is
+        #     existing 'Appeal' / 'Applead' + Live    → 'Done'
+        #     existing 'Appeal' / 'Applead' + Missing → unchanged
+        #     existing 'Live'               + Live    → 'Live' (unchanged)
+        #     existing 'Live'               + Missing → 'Missing'
+        #     anything else                           → verdict as-is
+        # 'Appeal' is the canonical name in the user's sheets; 'Applead'
+        # is treated as the same workflow state because some rows still
+        # carry the older spelling.
+        APPEAL_LIKE = {'appeal', 'appealed', 'applead', 'applied'}
         verdict_by_url = {url.lower(): v for (_, url, v) in results}
 
         def _final_status(row_idx: int, verdict: str) -> str:
             cur_raw = existing_status.get(row_idx, '') or ''
             cur = cur_raw.strip().lower()
-            if cur == 'applead':
+            if cur in APPEAL_LIKE:
                 if verdict == 'Live':
                     return 'Done'
                 if verdict == 'Missing':
-                    # Don't downgrade an Applead row when the link is
+                    # Don't downgrade an appealed row when the link is
                     # not visible yet — leave the existing value alone.
                     return cur_raw
             return verdict
