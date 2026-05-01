@@ -656,25 +656,22 @@ async def _check_url(page, url: str, timeout_sec: int) -> str:
             pass
     await asyncio.sleep(3)
 
-    # PRIMARY CHECK — star-rating container of a posted review.
-    # Two robust signals; the page only needs ONE of them to be Live.
+    # PRIMARY CHECK — the star-rating container of a posted review.
+    # A live review can carry ANY rating (1, 2, 3, 4 or 5 stars), so
+    # the verdict isn't tied to a specific star count — we just need
+    # to confirm the rating widget is on the page.
     #
-    # 1. The container with the minified class token 'DU9Pgb' —
-    #    Google currently emits it as a CSS class, sometimes nested
-    #    in a multi-class string or as a jsname attribute.
-    # 2. The star-rating widget itself: <span class="kvMYJc"
-    #    role="img" aria-label="N stars">. The aria-label is the
-    #    most stable signal because it's human-readable copy that
-    #    Google rarely renames; matching '* stars' covers
-    #    "1 star" through "5 stars".
+    # Selectors below cover both signals the user shared, and they
+    # accept any rating because the attribute selector matches the
+    # SUBSTRING "star" (covers both "1 star" and "2/3/4/5 stars").
     LIVE_SIGNAL_SELECTORS = [
-        '.DU9Pgb',                              # class form
-        '[class*="DU9Pgb"]',                    # token in multi-class
-        '#DU9Pgb',                              # id (fallback)
-        '[jsname="DU9Pgb"]',                    # jsname (fallback)
-        'span.kvMYJc[aria-label*="stars"]',     # star-rating widget
-        'span.kvMYJc[aria-label*="star"]',      # 1-star variant
-        'span[role="img"][aria-label*="stars"]',
+        # 1) Minified class token on the rating container
+        '.DU9Pgb',
+        '[class*="DU9Pgb"]',
+        '[jsname="DU9Pgb"]',
+        # 2) The star-rating widget itself —
+        #    <span class="kvMYJc" role="img" aria-label="N stars">
+        'span.kvMYJc[role="img"][aria-label*="star"]',
         'span[role="img"][aria-label*="star"]',
     ]
     for _ in range(20):             # up to ~10s
