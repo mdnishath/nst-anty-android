@@ -65,6 +65,43 @@ def prepare_excel_with_common_settings(*args, **kwargs):
 app = Flask(__name__)
 CORS(app, supports_credentials=False)
 
+
+# Always return JSON errors so the UI doesn't see HTML and complain
+# about "Non-JSON response. Restart backend." Logs the full traceback
+# server-side for debugging.
+@app.errorhandler(404)
+def _json_404(_e):
+    return jsonify({
+        'success': False,
+        'message': f'Route not found: {request.method} {request.path}',
+    }), 404
+
+
+@app.errorhandler(500)
+def _json_500(e):
+    import traceback as _tb
+    err_str = str(e) or repr(e) or type(e).__name__
+    try:
+        _tb.print_exc()
+    except Exception:
+        pass
+    return jsonify({'success': False, 'message': f'Server error: {err_str}'}), 500
+
+
+@app.errorhandler(Exception)
+def _json_exc(e):
+    """Catch-all so unexpected raises in routes still produce JSON."""
+    import traceback as _tb
+    err_str = str(e) or repr(e) or type(e).__name__
+    try:
+        _tb.print_exc()
+    except Exception:
+        pass
+    return jsonify({
+        'success': False,
+        'message': f'{type(e).__name__}: {err_str}',
+    }), 500
+
 # ── Auth (licensing removed — open access) ───────────────────────────────────
 # No token or license required. All endpoints are freely accessible.
 
