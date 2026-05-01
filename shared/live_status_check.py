@@ -268,23 +268,37 @@ def _worker_sheet(sheet_id: str, tab_name: str, num_workers: int,
             except Exception: pass
 
         # 4. Mirror verdicts to all rows that had each URL, push to sheet.
-        # Status-promotion rules (per user spec):
-        #     existing 'Applead' + verdict 'Live'   → 'Done'
-        #     existing 'Live'    + verdict 'Live'   → 'Live' (unchanged)
-        #     existing 'Live'    + verdict 'Missing'→ 'Missing'
-        #     anything else                         → verdict as-is
+        # Status-transition rules (per user spec):
+        #     existing 'Applead' + verdict 'Live'    → 'Done'
+        #     existing 'Applead' + verdict 'Missing' → 'Applead' (unchanged)
+        #     existing 'Live'    + verdict 'Live'    → 'Live'    (unchanged)
+        #     existing 'Live'    + verdict 'Missing' → 'Missing'
+        #     anything else                          → verdict as-is
         verdict_by_url = {url.lower(): v for (_, url, v) in results}
 
         def _final_status(row_idx: int, verdict: str) -> str:
-            cur = (existing_status.get(row_idx, '') or '').strip().lower()
-            if cur == 'applead' and verdict == 'Live':
-                return 'Done'
+            cur_raw = existing_status.get(row_idx, '') or ''
+            cur = cur_raw.strip().lower()
+            if cur == 'applead':
+                if verdict == 'Live':
+                    return 'Done'
+                if verdict == 'Missing':
+                    # Don't downgrade an Applead row when the link is
+                    # not visible yet — leave the existing value alone.
+                    return cur_raw
             return verdict
 
         row_updates: dict[int, str] = {}
         for row_idx, url in all_rows:
             verdict = verdict_by_url.get(url.lower(), 'Error')
-            row_updates[row_idx] = _final_status(row_idx, verdict)
+            new_val = _final_status(row_idx, verdict)
+            cur = (existing_status.get(row_idx, '') or '').strip()
+            # Skip the write if the value would be unchanged — avoids
+            # marking unrelated cells as "modified" in the sheet's
+            # version history and saves a few API quota cells.
+            if new_val == cur:
+                continue
+            row_updates[row_idx] = new_val
 
         bu = _si.batch_update_status(
             resources_path, sheet_id, tab_name, status_col, row_updates,
