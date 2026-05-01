@@ -1324,6 +1324,152 @@ def _batch_login_worker(accounts: list[dict], num_workers: int,
 
 # ── Do All Appeal ────────────────────────────────────────────────────────────
 
+def do_all_appeal_from_sheet(sheet_id: str, tab_name: str,
+                             num_workers: int = 5,
+                             resources_path=None,
+                             target_status: str = 'Missing',
+                             write_back_status: str = 'Applead') -> dict:
+    """Find rows in the given Google Sheet tab whose Status column equals
+    *target_status* (default 'Missing'), match their Email column to
+    existing profiles, run the standard Appeal flow on those profiles,
+    and after each profile's appeal completes write *write_back_status*
+    (default 'Applead') to that row's Status column on the sheet.
+
+    The same _appeal_status dict the regular Do All Appeal feeds keeps
+    powering the bottom-left progress popup, so the UI doesn't need any
+    extra plumbing.
+    """
+    from shared import sheets_integration as _si
+    global _appeal_status
+
+    if _appeal_status.get('running'):
+        return {'success': False, 'error': 'Do All Appeal is already running'}
+
+    if not sheet_id or not tab_name:
+        return {'success': False, 'error': 'sheet_id + tab_name required'}
+
+    rows_res = _si.read_rows_by_status(
+        resources_path, sheet_id, tab_name, target_status,
+    )
+    if not rows_res.get('success'):
+        return {'success': False, 'error': rows_res.get('message') or 'sheet read failed'}
+
+    sheet_rows = rows_res.get('rows') or []
+    status_col = rows_res.get('status_col')
+    if not sheet_rows:
+        return {'success': False,
+                'error': f"No rows with Status='{target_status}' in {tab_name}"}
+
+    # Match emails to existing profiles
+    all_profiles = _read_profiles()
+    by_email = {(p.get('email') or '').strip().lower(): p for p in all_profiles}
+    matched_profiles = []
+    profile_to_row: dict[str, int] = {}
+    matched_emails = set()
+    not_found = []
+    for r in sheet_rows:
+        em = (r.get('email') or '').strip().lower()
+        if not em:
+            continue
+        prof = by_email.get(em)
+        if not prof:
+            not_found.append(r.get('email'))
+            continue
+        if em in matched_emails:
+            # Same email appearing in multiple rows — only run appeal once;
+            # the write-back loop handles all rows individually below.
+            profile_to_row.setdefault(prof['id'], r['row'])
+            continue
+        matched_emails.add(em)
+        matched_profiles.append(prof)
+        profile_to_row[prof['id']] = r['row']
+
+    if not matched_profiles:
+        return {'success': False,
+                'error': 'No matching profiles found for any email in this sheet'}
+
+    # Skip profiles that already have a browser open
+    available = []
+    for p in matched_profiles:
+        with _lock:
+            if p['id'] in _active_browsers:
+                _log(f"[APPEAL][SHEET] Skipping {p.get('email', p['id'])} — browser already open")
+                continue
+        available.append(p)
+    if not available:
+        return {'success': False, 'error': 'All matched profiles already have browsers open'}
+
+    num_workers = max(1, num_workers)
+    _log(f"[APPEAL][SHEET] {len(available)} profiles to appeal "
+         f"(from {len(sheet_rows)} '{target_status}' rows in '{tab_name}')")
+
+    _appeal_status = {
+        'running': True,
+        'progress': 'Starting...',
+        'done': 0,
+        'total': len(available),
+        'results': [],
+        'report_path': '',
+        'sheet_id': sheet_id,
+        'tab_name': tab_name,
+    }
+
+    # Build all-rows list so write-back can mirror to every row sharing
+    # the same email (in case a profile appears in multiple rows).
+    rows_by_email: dict[str, list[int]] = {}
+    for r in sheet_rows:
+        em = (r.get('email') or '').strip().lower()
+        if em:
+            rows_by_email.setdefault(em, []).append(r['row'])
+
+    def _post_run(all_results: list[dict]):
+        """Called after _do_all_appeal_worker finishes — write the
+        appropriate status back to each row on the sheet."""
+        try:
+            from shared import sheets_integration as _si2
+            row_updates: dict[int, str] = {}
+            for r in all_results:
+                em = (r.get('email') or '').strip().lower()
+                if not em:
+                    continue
+                ok = bool(r.get('success'))
+                verdict = write_back_status if ok else 'Failed'
+                for ri in rows_by_email.get(em, []):
+                    row_updates[ri] = verdict
+            if not row_updates:
+                _log('[APPEAL][SHEET] No row updates to push back', 'info')
+                return
+            res = _si2.batch_update_status(
+                resources_path, sheet_id, tab_name, status_col, row_updates,
+            )
+            if res.get('success'):
+                _log(f"[APPEAL][SHEET] Wrote {res.get('updated', 0)} status cells back to sheet", 'success')
+                _appeal_status['report_path'] = (
+                    f"Updated {res.get('updated', 0)} cells in '{tab_name}'"
+                )
+            else:
+                _log(f"[APPEAL][SHEET] Sheet write failed: {res.get('message')}", 'error')
+                _appeal_status['report_path'] = (
+                    f"Sheet write failed: {res.get('message')}"
+                )
+        except Exception as e:
+            _log(f"[APPEAL][SHEET] write-back error: {e}", 'error')
+
+    threading.Thread(
+        target=_do_all_appeal_worker,
+        args=(available, num_workers),
+        kwargs={'on_complete': _post_run},
+        daemon=True, name='do-all-appeal-sheet',
+    ).start()
+
+    return {
+        'success': True,
+        'matched': len(available),
+        'unmatched': not_found,
+        'total_sheet_rows': len(sheet_rows),
+    }
+
+
 def do_all_appeal_profiles(num_workers: int = 5, profile_ids: list = None, **kwargs) -> dict:
     """
     Run Do All Appeal on selected profiles using parallel workers.
@@ -1438,8 +1584,14 @@ def stop_appeal() -> dict:
     return {'success': False, 'message': 'No appeal running'}
 
 
-def _do_all_appeal_worker(profiles: list[dict], num_workers: int):
-    """Background worker: runs Do All Appeal on all profiles in parallel."""
+def _do_all_appeal_worker(profiles: list[dict], num_workers: int,
+                          on_complete=None):
+    """Background worker: runs Do All Appeal on all profiles in parallel.
+
+    If *on_complete* is given it's called with the results list once
+    everything finishes — used by the sheet-driven flow to push status
+    back to the originating Google Sheet.
+    """
     global _appeal_status
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1542,9 +1694,19 @@ def _do_all_appeal_worker(profiles: list[dict], num_workers: int):
     success_count = sum(1 for r in all_results if r.get('success'))
     _log(f"[APPEAL] ✅ All complete: {success_count}/{len(all_results)} profiles processed", 'success')
 
-    _appeal_status['running'] = False
     _appeal_status['results'] = all_results
     _appeal_status['report_path'] = report_path
+
+    # Optional sheet write-back hook (used by do_all_appeal_from_sheet).
+    # Run AFTER the report is generated so the local report is always
+    # produced; sheet errors don't kill the whole job.
+    if on_complete:
+        try:
+            on_complete(all_results)
+        except Exception as _hook_err:
+            _log(f"[APPEAL] on_complete hook failed: {_hook_err}", 'warning')
+
+    _appeal_status['running'] = False
 
 
 async def _run_appeal_for_profile(profile: dict, worker_id: int) -> dict:

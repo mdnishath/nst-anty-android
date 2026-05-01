@@ -2784,6 +2784,61 @@ def profiles_appeal_status():
     return jsonify(profile_manager.get_appeal_status())
 
 
+@app.route('/api/profiles/appeal/match-sheet', methods=['POST'])
+def profiles_appeal_match_sheet():
+    """Preview: how many rows in the chosen tab have Status='Missing',
+    how many of their emails match existing profiles."""
+    body = request.get_json(silent=True) or {}
+    sheet_id = (body.get('sheet_id') or '').strip()
+    tab_name = (body.get('tab_name') or '').strip()
+    target = (body.get('target_status') or 'Missing').strip()
+    if not sheet_id or not tab_name:
+        return jsonify({'success': False, 'message': 'sheet_id + tab_name required'}), 400
+    res = _sheets_int.read_rows_by_status(RESOURCES_PATH, sheet_id, tab_name, target)
+    if not res.get('success'):
+        return jsonify(res)
+    rows = res.get('rows') or []
+    all_profiles = profile_manager.list_profiles()
+    by_email = {(p.get('email') or '').strip().lower(): p for p in all_profiles}
+    matched = []
+    not_found = []
+    for r in rows:
+        em = (r.get('email') or '').strip().lower()
+        if not em:
+            continue
+        if em in by_email:
+            matched.append(em)
+        else:
+            not_found.append(em)
+    return jsonify({
+        'success': True,
+        'total_missing_rows': len(rows),
+        'matched_count': len(set(matched)),
+        'not_found_count': len(set(not_found)),
+        'not_found_sample': list(set(not_found))[:5],
+    })
+
+
+@app.route('/api/profiles/appeal/start-from-sheet', methods=['POST'])
+def profiles_appeal_start_from_sheet():
+    """Run Do All Appeal on profiles whose email appears in rows of a
+    Google Sheet tab where Status='Missing'. After each appeal finishes
+    its row is updated with 'Applead' (success) or 'Failed' (error)."""
+    body = request.get_json(silent=True) or {}
+    sheet_id = (body.get('sheet_id') or '').strip()
+    tab_name = (body.get('tab_name') or '').strip()
+    workers = int(body.get('workers') or 3)
+    if not sheet_id or not tab_name:
+        return jsonify({'success': False, 'message': 'sheet_id + tab_name required'}), 400
+    result = profile_manager.do_all_appeal_from_sheet(
+        sheet_id=sheet_id, tab_name=tab_name,
+        num_workers=workers, resources_path=RESOURCES_PATH,
+    )
+    if not result.get('success'):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
 @app.route('/api/profiles/appeal-match-excel', methods=['POST'])
 def profiles_appeal_match_excel():
     """Read an Excel file, extract emails, and return matched profile IDs."""

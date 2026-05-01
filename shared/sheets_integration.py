@@ -440,6 +440,71 @@ def batch_update_status(resources_path, spreadsheet_id: str, tab_name: str,
 # Convenience helper for ops: read a column by exact header
 # ─────────────────────────────────────────────────────────────────────────────
 
+def read_rows_by_status(resources_path, spreadsheet_id: str, tab_name: str,
+                        target_status: str = 'missing') -> dict:
+    """Find rows in *tab_name* whose 'Status' column matches
+    *target_status* (case-insensitive). Returns each match with its
+    row index, email, and review live link.
+
+    Output:
+      {
+        'success': True,
+        'status_col': 6,
+        'email_col': 2,
+        'link_col': 5,
+        'rows': [
+            {'row': 12, 'email': 'a@b.com', 'link': 'https://…'},
+            ...
+        ]
+      }
+    """
+    res = read_sheet(resources_path, spreadsheet_id, tab_name)
+    if not res.get('success'):
+        return {'success': False, 'message': res.get('message')}
+    rows = res.get('values') or []
+    if not rows:
+        return {'success': True, 'rows': [], 'status_col': None,
+                'email_col': None, 'link_col': None}
+    headers = rows[0]
+    def _find(name):
+        nl = name.strip().lower()
+        for i, h in enumerate(headers):
+            if str(h or '').strip().lower() == nl:
+                return i
+        return None
+    status_idx = _find('Status')
+    email_idx = _find('Email')
+    link_idx = _find('Review Live Link')
+    if status_idx is None:
+        return {'success': False,
+                'message': "Header 'Status' not found in the tab"}
+    if email_idx is None:
+        return {'success': False,
+                'message': "Header 'Email' not found in the tab"}
+    target = target_status.strip().lower()
+    out = []
+    for ri, row in enumerate(rows[1:], start=2):
+        st = ''
+        if status_idx < len(row):
+            st = str(row[status_idx] or '').strip()
+        if st.lower() != target:
+            continue
+        em = str(row[email_idx] or '').strip() if email_idx < len(row) else ''
+        if not em:
+            continue
+        link = ''
+        if link_idx is not None and link_idx < len(row):
+            link = str(row[link_idx] or '').strip()
+        out.append({'row': ri, 'email': em, 'link': link})
+    return {
+        'success': True,
+        'status_col': status_idx + 1,
+        'email_col': email_idx + 1,
+        'link_col': (link_idx + 1) if link_idx is not None else None,
+        'rows': out,
+    }
+
+
 def read_column_by_header(resources_path, spreadsheet_id: str, tab_name: str,
                           header: str) -> dict:
     """Find a column by exact header (case-insensitive) in row 1, then

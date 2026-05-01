@@ -1863,37 +1863,193 @@
     }
 
     // ── Appeal Mode Toggle (Select vs Excel) ────────────────────────────────
-    let _appealMode = 'select'; // 'select' | 'excel'
+    let _appealMode = 'select'; // 'select' | 'excel' | 'sheet'
     let _appealExcelPath = '';
+    let _appealSheetId = '';
+    let _appealSheetName = '';
 
     function _setAppealMode(mode) {
         _appealMode = mode;
-        const selectBtn = document.getElementById('appealModeSelectBtn');
-        const excelBtn = document.getElementById('appealModeExcelBtn');
-        const selectControls = document.getElementById('appealSelectControls');
-        const excelControls = document.getElementById('appealExcelControls');
+        const ids = ['appealModeSelectBtn', 'appealModeExcelBtn', 'appealModeSheetBtn'];
+        const ctrls = {
+            select: 'appealSelectControls',
+            excel:  'appealExcelControls',
+            sheet:  'appealSheetControls',
+        };
         const hint = document.getElementById('appealModeHint');
+        // Reset visuals
+        ids.forEach(id => {
+            const b = document.getElementById(id);
+            if (!b) return;
+            b.classList.remove('active');
+            b.style.background = 'transparent';
+            b.style.color = '#94a3b8';
+        });
+        Object.values(ctrls).forEach(cid => {
+            const c = document.getElementById(cid);
+            if (c) c.style.display = 'none';
+        });
+        // Activate selected
+        const activeBtnId =
+            mode === 'excel' ? 'appealModeExcelBtn' :
+            mode === 'sheet' ? 'appealModeSheetBtn' :
+                               'appealModeSelectBtn';
+        const ab = document.getElementById(activeBtnId);
+        if (ab) {
+            ab.classList.add('active');
+            ab.style.background = '';
+            ab.style.color = '';
+        }
+        const ac = document.getElementById(ctrls[mode] || ctrls.select);
+        if (ac) ac.style.display = '';
+        if (hint) {
+            if (mode === 'excel')      hint.textContent = 'Upload an Excel file with an Email column.';
+            else if (mode === 'sheet') hint.textContent = "Pick a Google Sheet — rows with Status='Missing' will be appealed.";
+            else                       hint.textContent = 'Select profiles to run Appeal on.';
+        }
+        if (mode === 'sheet') _refreshAppealSheetAuth();
+    }
 
-        if (mode === 'excel') {
-            selectBtn.classList.remove('active');
-            selectBtn.style.background = 'transparent';
-            selectBtn.style.color = '#94a3b8';
-            excelBtn.classList.add('active');
-            excelBtn.style.background = '';
-            excelBtn.style.color = '';
-            if (selectControls) selectControls.style.display = 'none';
-            if (excelControls) excelControls.style.display = '';
-            if (hint) hint.textContent = 'Upload an Excel file with an Email column.';
-        } else {
-            excelBtn.classList.remove('active');
-            excelBtn.style.background = 'transparent';
-            excelBtn.style.color = '#94a3b8';
-            selectBtn.classList.add('active');
-            selectBtn.style.background = '';
-            selectBtn.style.color = '';
-            if (selectControls) selectControls.style.display = '';
-            if (excelControls) excelControls.style.display = 'none';
-            if (hint) hint.textContent = 'Select profiles to run Appeal on.';
+    // ── Appeal: Google Sheet mode ─────────────────────────────────────────
+    async function _refreshAppealSheetAuth() {
+        try {
+            const r = await fetch('http://localhost:5000/api/sheets/status');
+            const s = await r.json();
+            const auth = document.getElementById('appealSheetAuthBox');
+            const picker = document.getElementById('appealSheetPicker');
+            if (s.configured) {
+                if (auth) auth.style.display = 'none';
+                if (picker) picker.style.display = '';
+                _loadAppealSheetList();
+            } else {
+                if (auth) auth.style.display = '';
+                if (picker) picker.style.display = 'none';
+            }
+        } catch { /* ignore */ }
+    }
+
+    let _appealSheetSearchTimer = null;
+    async function _loadAppealSheetList() {
+        const list = document.getElementById('appealSheetList');
+        if (!list) return;
+        const q = (document.getElementById('appealSheetSearch') || {}).value || '';
+        list.innerHTML = '<div style="padding:14px;text-align:center;color:#64748b;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> Loading…</div>';
+        try {
+            const url = 'http://localhost:5000/api/sheets/list' + (q ? `?q=${encodeURIComponent(q)}` : '');
+            const r = await fetch(url);
+            const d = await r.json();
+            if (!d.success) {
+                list.innerHTML = `<div style="padding:14px;color:#fca5a5;font-size:12px;">${_esc(d.message)}</div>`;
+                return;
+            }
+            const sheets = d.sheets || [];
+            if (!sheets.length) {
+                list.innerHTML = '<div style="padding:14px;text-align:center;color:#64748b;font-size:12px;">No spreadsheets.</div>';
+                return;
+            }
+            list.innerHTML = sheets.map(s => {
+                const isSel = s.id === _appealSheetId ? 'background:rgba(245,158,11,0.18);' : '';
+                return `<div class="ap-sheet-row" data-id="${_esc(s.id)}" data-name="${_esc(s.name||'')}"
+                            style="padding:8px 10px;border-bottom:1px solid #1e293b;cursor:pointer;${isSel}">
+                    <div style="font-size:13px;color:#e2e8f0;">${_esc(s.name||'(unnamed)')}</div>
+                    <div style="font-size:11px;color:#64748b;">${_esc(s.owner||'')}</div>
+                </div>`;
+            }).join('');
+            list.querySelectorAll('.ap-sheet-row').forEach(el => {
+                el.addEventListener('click', () => _onAppealSheetPicked(
+                    el.getAttribute('data-id'),
+                    el.getAttribute('data-name'),
+                ));
+            });
+        } catch (e) {
+            list.innerHTML = `<div style="padding:14px;color:#fca5a5;font-size:12px;">${_esc(e.message)}</div>`;
+        }
+    }
+
+    async function _onAppealSheetPicked(id, name) {
+        _appealSheetId = id;
+        _appealSheetName = name || '';
+        document.querySelectorAll('#appealSheetList .ap-sheet-row').forEach(el => {
+            el.style.background = el.getAttribute('data-id') === id
+                ? 'rgba(245,158,11,0.18)' : 'transparent';
+        });
+        const tabRow = document.getElementById('appealSheetTabRow');
+        const sel = document.getElementById('appealSheetTab');
+        if (tabRow) tabRow.style.display = '';
+        if (sel) {
+            sel.innerHTML = '<option value="" disabled>Loading tabs…</option>';
+        }
+        try {
+            const r = await fetch(`http://localhost:5000/api/sheets/${encodeURIComponent(id)}/tabs`);
+            const d = await r.json();
+            if (!d.success) {
+                if (sel) sel.innerHTML = `<option value="" disabled>${_esc(d.message)}</option>`;
+                return;
+            }
+            const tabs = d.tabs || [];
+            if (sel) {
+                sel.innerHTML = '';
+                tabs.forEach(t => {
+                    const o = document.createElement('option');
+                    o.value = t.title; o.textContent = t.title;
+                    sel.appendChild(o);
+                });
+                if (tabs.length > 0) {
+                    sel.value = tabs[0].title;
+                    _previewAppealSheet();
+                }
+            }
+        } catch (e) { App.toast('Tabs error: ' + e.message, 'error'); }
+    }
+
+    async function _previewAppealSheet() {
+        const id = _appealSheetId;
+        const tab = (document.getElementById('appealSheetTab') || {}).value;
+        const info = document.getElementById('appealSheetMatchInfo');
+        if (!id || !tab || !info) { if (info) info.style.display = 'none'; return; }
+        info.style.display = '';
+        info.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Matching…';
+        try {
+            const r = await fetch('http://localhost:5000/api/profiles/appeal/match-sheet', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sheet_id: id, tab_name: tab }),
+            });
+            const d = await r.json();
+            if (!d.success) {
+                info.innerHTML = `<i class="fas fa-times-circle" style="color:#ef4444;"></i> ${_esc(d.message)}`;
+                return;
+            }
+            let html =
+                `<i class="fas fa-check-circle" style="color:#22c55e;"></i> ` +
+                `<b>${_esc(_appealSheetName)} › ${_esc(tab)}</b> — ` +
+                `<b>${d.matched_count}</b> profile${d.matched_count===1?'':'s'} to appeal ` +
+                `(out of ${d.total_missing_rows} 'Missing' rows)`;
+            if (d.not_found_count > 0) {
+                html += ` · <span style="color:#f59e0b;">${d.not_found_count} email${d.not_found_count>1?'s':''} not in profile manager</span>`;
+            }
+            info.innerHTML = html;
+        } catch (e) {
+            info.innerHTML = `<i class="fas fa-times-circle" style="color:#ef4444;"></i> ${_esc(e.message)}`;
+        }
+    }
+
+    async function _doAppealSheetAuthorize() {
+        const btn = document.getElementById('appealSheetAuthBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Waiting…'; }
+        App.toast('Browser will open — log in and grant access', 'info');
+        try {
+            const r = await fetch('http://localhost:5000/api/sheets/authorize', { method: 'POST' });
+            const d = await r.json();
+            if (d.success) {
+                App.toast('Google Sheets connected ✓', 'success');
+                await _refreshAppealSheetAuth();
+            } else {
+                App.toast(d.message || 'Authorization failed', 'error');
+            }
+        } catch (e) { App.toast('Auth error: ' + e.message, 'error'); }
+        finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-key"></i> Connect Google Sheets'; }
         }
     }
 
@@ -1943,9 +2099,39 @@
     }
 
     async function startDoAllAppeal() {
+        const workers = parseInt(document.getElementById('appealWorkers')?.value || '3', 10);
+
+        // ── Google Sheet mode ────────────────────────────────────────
+        if (_appealMode === 'sheet') {
+            const tab = (document.getElementById('appealSheetTab') || {}).value;
+            if (!_appealSheetId || !tab) {
+                App.toast('Pick a sheet + tab first', 'error');
+                return;
+            }
+            closeAppealModal();
+            try {
+                const data = await _api('/api/profiles/appeal/start-from-sheet', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        sheet_id: _appealSheetId,
+                        tab_name: tab,
+                        workers,
+                    })
+                });
+                if (data.success) {
+                    App.toast(`Appeal started on ${data.matched} profile(s) from sheet`, 'success');
+                    _startOpProgress('appeal');
+                    _startStatusPolling();
+                } else {
+                    App.toast(data.error || data.message || 'Failed', 'error');
+                }
+            } catch (e) { App.toast('Appeal error: ' + e.message, 'error'); }
+            return;
+        }
+
+        // ── Select / Excel mode (existing flow) ──────────────────────
         if (_appealChecked.size === 0) { App.toast('Select at least one profile', 'error'); return; }
         const profileIds = Array.from(_appealChecked);
-        const workers = parseInt(document.getElementById('appealWorkers')?.value || '3', 10);
         closeAppealModal();
         try {
             const data = await _api('/api/profiles/do-all-appeal', {
@@ -3221,6 +3407,16 @@
         // Appeal mode toggle (Select vs Excel)
         _btn('appealModeSelectBtn', () => _setAppealMode('select'));
         _btn('appealModeExcelBtn', () => _setAppealMode('excel'));
+        _btn('appealModeSheetBtn', () => _setAppealMode('sheet'));
+        _btn('appealSheetAuthBtn', _doAppealSheetAuthorize);
+        _btn('appealSheetRefreshBtn', _loadAppealSheetList);
+        const apSearch = document.getElementById('appealSheetSearch');
+        if (apSearch) apSearch.addEventListener('input', () => {
+            if (_appealSheetSearchTimer) clearTimeout(_appealSheetSearchTimer);
+            _appealSheetSearchTimer = setTimeout(_loadAppealSheetList, 350);
+        });
+        const apTab = document.getElementById('appealSheetTab');
+        if (apTab) apTab.addEventListener('change', _previewAppealSheet);
         _btn('appealExcelBrowseBtn', _appealBrowseExcel);
 
         document.getElementById('appealModal')?.addEventListener('click', e => {
