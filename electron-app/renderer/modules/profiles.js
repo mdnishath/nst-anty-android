@@ -990,16 +990,190 @@
     }
 
     // ── Live Status Check ─────────────────────────────────────────────────
+    let _liveCheckSource = 'excel';   // 'excel' | 'sheet'
+    let _selectedSheetId = '';
+    let _selectedSheetName = '';
+
     function openLiveCheckModal() {
         const ov = _$('liveCheckModalOverlay');
         if (ov) ov.classList.add('active');
+        _switchLiveCheckSource(_liveCheckSource);
         const fp = _val('liveCheckFilePath');
-        if (fp) _previewLiveCheckFile();
+        if (fp && _liveCheckSource === 'excel') _previewLiveCheckFile();
     }
 
     function closeLiveCheckModal() {
         const ov = _$('liveCheckModalOverlay');
         if (ov) ov.classList.remove('active');
+    }
+
+    function _switchLiveCheckSource(src) {
+        _liveCheckSource = src;
+        const excel = _$('liveCheckSrcExcel'), sheet = _$('liveCheckSrcSheet');
+        const eg = _$('liveCheckExcelGroup'), sg = _$('liveCheckSheetGroup');
+        if (src === 'sheet') {
+            if (excel) excel.style = 'flex:1;background:transparent;color:#94a3b8;';
+            if (sheet) sheet.style = 'flex:1;background:rgba(99,102,241,0.25);';
+            if (eg) eg.style.display = 'none';
+            if (sg) sg.style.display = 'block';
+            _refreshSheetAuth();
+        } else {
+            if (excel) excel.style = 'flex:1;background:rgba(99,102,241,0.25);';
+            if (sheet) sheet.style = 'flex:1;background:transparent;color:#94a3b8;';
+            if (eg) eg.style.display = 'block';
+            if (sg) sg.style.display = 'none';
+            const prev = _$('liveCheckPreview');
+            if (prev) prev.style.display = 'none';
+        }
+    }
+
+    async function _refreshSheetAuth() {
+        try {
+            const r = await fetch('http://localhost:5000/api/sheets/status');
+            const s = await r.json();
+            const auth = _$('liveCheckSheetAuth');
+            const picker = _$('liveCheckSheetPicker');
+            if (s.configured) {
+                if (auth) auth.style.display = 'none';
+                if (picker) picker.style.display = 'block';
+                _loadSheetList();
+            } else {
+                if (auth) auth.style.display = 'block';
+                if (picker) picker.style.display = 'none';
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    async function _doSheetAuthorize() {
+        const btn = _$('liveCheckSheetAuthBtn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Waiting for browser…'; }
+        App.toast('A browser tab will open — log in and grant access', 'info');
+        try {
+            const r = await fetch('http://localhost:5000/api/sheets/authorize', { method: 'POST' });
+            const d = await r.json();
+            if (d.success) {
+                App.toast('Google Sheets connected ✓', 'success');
+                await _refreshSheetAuth();
+            } else {
+                App.toast(d.message || 'Authorization failed', 'error');
+            }
+        } catch (e) {
+            App.toast('Auth error: ' + e.message, 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-key"></i> Connect Google Sheets'; }
+        }
+    }
+
+    let _sheetSearchTimer = null;
+    async function _loadSheetList() {
+        const list = _$('liveCheckSheetList');
+        if (!list) return;
+        const q = (_val('liveCheckSheetSearch') || '').trim();
+        list.innerHTML = '<div style="padding:14px;text-align:center;color:#64748b;font-size:12px;"><i class="fas fa-spinner fa-spin"></i> Loading…</div>';
+        try {
+            const url = 'http://localhost:5000/api/sheets/list' + (q ? `?q=${encodeURIComponent(q)}` : '');
+            const r = await fetch(url);
+            const d = await r.json();
+            if (!d.success) {
+                list.innerHTML = `<div style="padding:14px;color:#fca5a5;font-size:12px;">${d.message}</div>`;
+                return;
+            }
+            const sheets = d.sheets || [];
+            if (!sheets.length) {
+                list.innerHTML = '<div style="padding:14px;text-align:center;color:#64748b;font-size:12px;">No spreadsheets found.</div>';
+                return;
+            }
+            list.innerHTML = sheets.map(s => {
+                const mod = s.modified ? new Date(s.modified).toLocaleDateString() : '';
+                const isSel = s.id === _selectedSheetId ? 'background:rgba(99,102,241,0.18);' : '';
+                return `<div class="sheet-row" data-id="${s.id}" data-name="${(s.name||'').replace(/"/g,'&quot;')}"
+                            style="padding:8px 10px;border-bottom:1px solid #1e293b;cursor:pointer;${isSel}">
+                    <div style="font-size:13px;color:#e2e8f0;">${s.name || '(unnamed)'}</div>
+                    <div style="font-size:11px;color:#64748b;">Modified ${mod} · ${s.owner || ''}</div>
+                </div>`;
+            }).join('');
+            list.querySelectorAll('.sheet-row').forEach(el => {
+                el.addEventListener('click', () => _onSheetPicked(
+                    el.getAttribute('data-id'),
+                    el.getAttribute('data-name'),
+                ));
+            });
+        } catch (e) {
+            list.innerHTML = `<div style="padding:14px;color:#fca5a5;font-size:12px;">${e.message}</div>`;
+        }
+    }
+
+    async function _onSheetPicked(id, name) {
+        _selectedSheetId = id;
+        _selectedSheetName = name || '';
+        // Highlight in list
+        document.querySelectorAll('#liveCheckSheetList .sheet-row').forEach(el => {
+            el.style.background = el.getAttribute('data-id') === id
+                ? 'rgba(99,102,241,0.18)' : 'transparent';
+        });
+        // Load tabs
+        const tabGroup = _$('liveCheckTabGroup');
+        const sel = _$('liveCheckTab');
+        if (tabGroup) tabGroup.style.display = 'block';
+        if (sel) sel.innerHTML = '<option>Loading…</option>';
+        try {
+            const r = await fetch(`http://localhost:5000/api/sheets/${encodeURIComponent(id)}/tabs`);
+            const d = await r.json();
+            if (sel) {
+                sel.innerHTML = '';
+                (d.tabs || []).forEach(t => {
+                    const o = document.createElement('option');
+                    o.value = t.title; o.textContent = t.title;
+                    sel.appendChild(o);
+                });
+            }
+            // Auto-preview the first tab
+            if ((d.tabs || []).length > 0) _previewLiveCheckSheet();
+        } catch (e) {
+            App.toast('Could not load tabs: ' + e.message, 'error');
+        }
+    }
+
+    async function _previewLiveCheckSheet() {
+        const id = _selectedSheetId;
+        const tab = _val('liveCheckTab');
+        const prev = _$('liveCheckPreview');
+        if (!prev) return;
+        if (!id || !tab) { prev.style.display = 'none'; return; }
+        prev.style.display = 'block';
+        prev.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reading sheet…';
+        try {
+            const r = await fetch(`http://localhost:5000/api/sheets/${encodeURIComponent(id)}/preview`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tab_name: tab }),
+            });
+            const d = await r.json();
+            if (d.success) {
+                const dup = d.duplicates || 0;
+                const uniq = d.unique_links != null ? d.unique_links : d.total_links;
+                const dupNote = dup > 0
+                    ? ` <span style="color:#f59e0b;">(${dup} duplicate${dup>1?'s':''} skipped)</span>`
+                    : '';
+                let detail = '';
+                if (d.column_letter && d.first_row && d.last_row) {
+                    detail = `<div style="margin-top:6px;font-size:11px;color:#64748b;">` +
+                        `Column <b>${d.column_letter}</b> "${d.header_column}" · ` +
+                        `URLs span rows ${d.first_row} → ${d.last_row} · ` +
+                        `<b>${d.total_links}</b> URL cells found` +
+                        `</div>`;
+                }
+                prev.innerHTML =
+                    `<i class="fas fa-check-circle" style="color:#22c55e;"></i> ` +
+                    `<b>${_selectedSheetName} › ${tab}</b> — ` +
+                    `<b style="color:#22c55e;">${uniq}</b> unique links to check` +
+                    dupNote + detail;
+            } else {
+                prev.innerHTML = `<i class="fas fa-exclamation-triangle" style="color:#f59e0b;"></i> ${d.message || 'Could not read sheet'}`;
+            }
+        } catch (e) {
+            prev.innerHTML = `<i class="fas fa-times-circle" style="color:#ef4444;"></i> ${e.message}`;
+        }
     }
 
     async function _previewLiveCheckFile() {
@@ -1046,21 +1220,33 @@
     }
 
     async function startLiveCheck() {
-        const filePath = (_val('liveCheckFilePath') || '').trim();
-        if (!filePath) { App.toast('Pick an Excel file first', 'error'); return; }
         const workers  = parseInt(_val('liveCheckWorkers'))  || 5;
         const timeout  = parseInt(_val('liveCheckTimeout'))  || 20;
         const showBrowser = !!(document.getElementById('liveCheckShowBrowser') && document.getElementById('liveCheckShowBrowser').checked);
         const startBtn = _$('liveCheckStartBtn');
+
+        // Build payload based on selected source
+        let payload = { workers, timeout_sec: timeout, show_browser: showBrowser };
+        if (_liveCheckSource === 'sheet') {
+            const tab = _val('liveCheckTab');
+            if (!_selectedSheetId || !tab) {
+                App.toast('Pick a Google Sheet + tab first', 'error');
+                return;
+            }
+            payload.sheet_id = _selectedSheetId;
+            payload.tab_name = tab;
+        } else {
+            const filePath = (_val('liveCheckFilePath') || '').trim();
+            if (!filePath) { App.toast('Pick an Excel file first', 'error'); return; }
+            payload.file_path = filePath;
+        }
+
         if (startBtn) { startBtn.disabled = true; startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting…'; }
         try {
             const r = await fetch('http://localhost:5000/api/profiles/live-check/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    file_path: filePath, workers, timeout_sec: timeout,
-                    show_browser: showBrowser,
-                }),
+                body: JSON.stringify(payload),
             });
             const d = await r.json();
             if (!d.success) {
@@ -3319,6 +3505,20 @@
         });
         const lcFileInp = _$('liveCheckFilePath');
         if (lcFileInp) lcFileInp.addEventListener('input', _previewLiveCheckFile);
+
+        // Source switcher tabs
+        _btn('liveCheckSrcExcel', () => _switchLiveCheckSource('excel'));
+        _btn('liveCheckSrcSheet', () => _switchLiveCheckSource('sheet'));
+        // Sheet picker controls
+        _btn('liveCheckSheetAuthBtn', _doSheetAuthorize);
+        _btn('liveCheckSheetRefreshBtn', _loadSheetList);
+        const sSearch = _$('liveCheckSheetSearch');
+        if (sSearch) sSearch.addEventListener('input', () => {
+            if (_sheetSearchTimer) clearTimeout(_sheetSearchTimer);
+            _sheetSearchTimer = setTimeout(_loadSheetList, 350);
+        });
+        const tabSel = _$('liveCheckTab');
+        if (tabSel) tabSel.addEventListener('change', _previewLiveCheckSheet);
         const blFileInp = _$('batchLoginFilePath');
         if (blFileInp) blFileInp.addEventListener('input', _previewBatchFile);
 

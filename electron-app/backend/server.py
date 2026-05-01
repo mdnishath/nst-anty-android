@@ -2495,13 +2495,109 @@ def profiles_live_check_preview():
 @app.route('/api/profiles/live-check/start', methods=['POST'])
 def profiles_live_check_start():
     body = request.get_json(silent=True) or {}
-    file_path = (body.get('file_path') or '').strip()
     workers = int(body.get('workers') or 5)
     timeout = int(body.get('timeout_sec') or 20)
     show_browser = bool(body.get('show_browser', False))
+
+    sheet_id = (body.get('sheet_id') or '').strip()
+    tab_name = (body.get('tab_name') or '').strip()
+    file_path = (body.get('file_path') or '').strip()
+
+    if sheet_id and tab_name:
+        return jsonify(_live_check.start_from_sheet(
+            sheet_id, tab_name, workers, timeout,
+            RESOURCES_PATH, show_browser,
+        ))
     if not file_path:
-        return jsonify({'success': False, 'message': 'file_path is required'}), 400
-    return jsonify(_live_check.start(file_path, workers, timeout, RESOURCES_PATH, show_browser))
+        return jsonify({'success': False,
+                        'message': 'Provide either file_path or sheet_id+tab_name'}), 400
+    return jsonify(_live_check.start(file_path, workers, timeout,
+                                     RESOURCES_PATH, show_browser))
+
+
+# ── Sheets integration endpoints ─────────────────────────────────────────────
+from shared import sheets_integration as _sheets_int
+
+
+@app.route('/api/sheets/status', methods=['GET'])
+def sheets_status():
+    return jsonify(_sheets_int.status(RESOURCES_PATH))
+
+
+@app.route('/api/sheets/authorize', methods=['POST'])
+def sheets_authorize():
+    """Open the OAuth consent flow in the user's default browser. Runs
+    in a background thread with a 3-min wall-clock cap."""
+    import threading
+    state = {'done': False, 'result': None}
+    def _w():
+        try:
+            state['result'] = _sheets_int.reauthorize(RESOURCES_PATH)
+        except Exception as e:
+            state['result'] = {'success': False, 'message': str(e)}
+        state['done'] = True
+    t = threading.Thread(target=_w, daemon=True, name='sheets-auth')
+    t.start()
+    t.join(timeout=180)
+    if not state['done']:
+        return jsonify({'success': False, 'message': 'OAuth timeout'})
+    return jsonify(state['result'])
+
+
+@app.route('/api/sheets/list', methods=['GET'])
+def sheets_list():
+    q = request.args.get('q', '').strip()
+    return jsonify(_sheets_int.list_spreadsheets(RESOURCES_PATH, q))
+
+
+@app.route('/api/sheets/<sheet_id>/tabs', methods=['GET'])
+def sheets_get_tabs(sheet_id):
+    return jsonify(_sheets_int.get_tabs(RESOURCES_PATH, sheet_id))
+
+
+@app.route('/api/sheets/<sheet_id>/preview', methods=['POST'])
+def sheets_preview(sheet_id):
+    """Return how many 'Review Live Link' URLs are in the chosen tab."""
+    body = request.get_json(silent=True) or {}
+    tab_name = (body.get('tab_name') or '').strip()
+    if not tab_name:
+        return jsonify({'success': False, 'message': 'tab_name required'}), 400
+    res = _sheets_int.read_column_by_header(
+        RESOURCES_PATH, sheet_id, tab_name, 'Review Live Link',
+    )
+    if not res.get('success'):
+        return jsonify(res)
+    rows = res.get('rows') or []
+    seen = set()
+    duplicates = 0
+    first_row = None
+    last_row = None
+    for ri, val in rows:
+        v = val.lower().strip()
+        if not (v.startswith('http://') or v.startswith('https://')):
+            continue
+        if first_row is None:
+            first_row = ri
+        last_row = ri
+        if v in seen:
+            duplicates += 1
+        else:
+            seen.add(v)
+    from openpyxl.utils import get_column_letter
+    col_letter = get_column_letter(res['col']) if res.get('col') else None
+    return jsonify({
+        'success': True,
+        'total_links': sum(
+            1 for _, v in rows
+            if v.lower().startswith(('http://', 'https://'))
+        ),
+        'unique_links': len(seen),
+        'duplicates': duplicates,
+        'header_column': 'Review Live Link',
+        'column_letter': col_letter,
+        'first_row': first_row,
+        'last_row': last_row,
+    })
 
 
 @app.route('/api/profiles/live-check/status', methods=['GET'])

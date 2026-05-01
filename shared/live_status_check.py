@@ -137,9 +137,144 @@ def start(file_path: str, num_workers: int = 5, timeout_sec: int = 20,
     return {'success': True}
 
 
+def start_from_sheet(sheet_id: str, tab_name: str, num_workers: int = 5,
+                     timeout_sec: int = 20,
+                     resources_path: Path | None = None,
+                     show_browser: bool = False) -> dict:
+    """Live-check the URLs in a Google Sheet tab. Status is written back
+    to the same tab's Status column in real time."""
+    with _status_lock:
+        if _status['running']:
+            return {'success': False, 'message': 'Already running'}
+    if not sheet_id or not tab_name:
+        return {'success': False, 'message': 'sheet_id + tab_name required'}
+    _cancel.clear()
+    threading.Thread(
+        target=_worker_sheet,
+        args=(sheet_id, tab_name, num_workers, timeout_sec,
+              resources_path, show_browser),
+        daemon=True, name='live-status-check-sheet',
+    ).start()
+    return {'success': True}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Worker
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _worker_sheet(sheet_id: str, tab_name: str, num_workers: int,
+                  timeout_sec: int, resources_path: Path | None,
+                  show_browser: bool):
+    """Same as _worker, but reads URLs from a Google Sheet tab and
+    writes the verdicts back to that tab's Status column."""
+    from shared import sheets_integration as _si
+    global _status
+
+    with _status_lock:
+        _status.update({
+            'running': True, 'started_at': datetime.utcnow().isoformat() + 'Z',
+            'finished_at': '', 'total': 0, 'done': 0, 'live': 0,
+            'not_live': 0, 'errors': 0, 'current_url': '', 'report_path': '',
+        })
+
+    # Sweep stale temp folders
+    try:
+        _tmp_parent = Path(tempfile.gettempdir())
+        for stale in _tmp_parent.glob('nst_live_check_*'):
+            try:
+                shutil.rmtree(stale, ignore_errors=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    tmp_root = Path(tempfile.mkdtemp(prefix='nst_live_check_'))
+
+    try:
+        # 1. Read the Review Live Link column from the sheet
+        col_res = _si.read_column_by_header(
+            resources_path, sheet_id, tab_name, 'Review Live Link',
+        )
+        if not col_res.get('success'):
+            with _status_lock:
+                _status['running'] = False
+                _status['finished_at'] = datetime.utcnow().isoformat() + 'Z'
+                _status['errors'] = 1
+                _status['current_url'] = (
+                    f"FATAL: {col_res.get('message', 'header not found')}"
+                )
+            return
+
+        # Build (row, url) lists; dedup by URL but preserve all rows for
+        # writing the status back to every occurrence.
+        all_rows: list[tuple[int, str]] = []
+        items: list[tuple[int, str]] = []
+        seen: set[str] = set()
+        for ri, v in col_res.get('rows') or []:
+            url = v.strip()
+            ul = url.lower()
+            if not (ul.startswith('http://') or ul.startswith('https://')):
+                continue
+            all_rows.append((ri, url))
+            if ul not in seen:
+                seen.add(ul)
+                items.append((ri, url))
+
+        with _status_lock:
+            _status['total'] = len(items)
+
+        # 2. Make sure a Status column exists on the sheet
+        st_res = _si.ensure_column(
+            resources_path, sheet_id, tab_name, 'Status',
+        )
+        if not st_res.get('success'):
+            with _status_lock:
+                _status['running'] = False
+                _status['finished_at'] = datetime.utcnow().isoformat() + 'Z'
+                _status['errors'] = 1
+                _status['current_url'] = (
+                    f"FATAL: {st_res.get('message', 'could not create Status column')}"
+                )
+            return
+        status_col = st_res['col']
+
+        # 3. Run the checks
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            results = loop.run_until_complete(
+                _run_checks(items, num_workers, timeout_sec, tmp_root, show_browser)
+            )
+        finally:
+            try: loop.close()
+            except Exception: pass
+
+        # 4. Mirror verdicts to all rows that had each URL, push to sheet
+        verdict_by_url = {url.lower(): v for (_, url, v) in results}
+        row_updates: dict[int, str] = {}
+        for row_idx, url in all_rows:
+            row_updates[row_idx] = verdict_by_url.get(url.lower(), 'Error')
+
+        bu = _si.batch_update_status(
+            resources_path, sheet_id, tab_name, status_col, row_updates,
+        )
+        report_msg = (f"Updated {bu.get('updated', 0)} cells in sheet"
+                      if bu.get('success')
+                      else f"Sheet update failed: {bu.get('message')}")
+
+        with _status_lock:
+            _status['running'] = False
+            _status['finished_at'] = datetime.utcnow().isoformat() + 'Z'
+            _status['report_path'] = report_msg
+    except Exception as e:
+        with _status_lock:
+            _status['running'] = False
+            _status['finished_at'] = datetime.utcnow().isoformat() + 'Z'
+            _status['errors'] = (_status.get('errors') or 0) + 1
+            _status['current_url'] = f'FATAL: {e}'
+    finally:
+        try: shutil.rmtree(tmp_root, ignore_errors=True)
+        except Exception: pass
+
 
 def _worker(file_path: str, num_workers: int, timeout_sec: int,
             resources_path: Path | None, show_browser: bool = False):

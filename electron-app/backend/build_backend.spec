@@ -82,8 +82,9 @@ a = Analysis(
         # ── Live Status Check ────────────────────────────────────────────────
         'shared.live_status_check',
 
-        # ── Google Drive backup ──────────────────────────────────────────────
+        # ── Google Drive + Sheets ────────────────────────────────────────────
         'shared.drive_backup',
+        'shared.sheets_integration',
         'google', 'google.auth', 'google.auth.transport.requests',
         'google.oauth2', 'google.oauth2.credentials',
         'googleapiclient', 'googleapiclient.discovery',
