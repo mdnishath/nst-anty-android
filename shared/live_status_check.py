@@ -657,15 +657,25 @@ async def _check_url(page, url: str, timeout_sec: int) -> str:
     await asyncio.sleep(3)
 
     # PRIMARY CHECK — DU9Pgb star-rating container.
-    # We poll for up to ~6s because the panel is rendered after a
-    # short data fetch on slower proxies.
-    for _ in range(12):
-        try:
-            count = await page.locator('#DU9Pgb').count()
-            if count > 0:
-                return 'Live'
-        except Exception:
-            pass
+    # Google's minified token "DU9Pgb" is used as a CLASS, not an id,
+    # on the live review's star-rating container. So we check the
+    # class form first, then any-attribute fallback in case Google
+    # changes how it uses the token.
+    DU9_SELECTORS = [
+        '.DU9Pgb',                  # most common — used as class
+        '#DU9Pgb',                  # in case it's ever an id
+        '[class*="DU9Pgb"]',        # token nested inside a multi-class string
+        '[jsname="DU9Pgb"]',        # sometimes Google emits the token as jsname
+        '[data-value="DU9Pgb"]',
+    ]
+    for _ in range(20):             # up to ~10s
+        for sel in DU9_SELECTORS:
+            try:
+                count = await page.locator(sel).count()
+                if count > 0:
+                    return 'Live'
+            except Exception:
+                continue
         await asyncio.sleep(0.5)
 
     # FALLBACK — explicit "review removed / not available" copy.
