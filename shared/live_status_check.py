@@ -637,7 +637,14 @@ async def _run_checks(items: list[tuple[int, str]], workers: int,
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _check_url(page, url: str, timeout_sec: int) -> str:
-    """Mirror mailexus-advanced live_check_link strategy."""
+    """Per user spec: a posted Google Maps review renders the star-rating
+    container with id 'DU9Pgb'. If that element exists on the page,
+    treat the review as Live. Anything else is Missing.
+
+    The previous text/selector heuristics are kept ONLY as a tail-end
+    fallback in case Google ever changes the id; the id check is what
+    decides the verdict in normal operation.
+    """
     # Step 1: navigate
     try:
         await page.goto(url, wait_until='domcontentloaded',
@@ -649,48 +656,24 @@ async def _check_url(page, url: str, timeout_sec: int) -> str:
             pass
     await asyncio.sleep(3)
 
-    # Step 2: missing-text indicators first
+    # PRIMARY CHECK — DU9Pgb star-rating container.
+    # We poll for up to ~6s because the panel is rendered after a
+    # short data fetch on slower proxies.
+    for _ in range(12):
+        try:
+            count = await page.locator('#DU9Pgb').count()
+            if count > 0:
+                return 'Live'
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+
+    # FALLBACK — explicit "review removed / not available" copy.
     try:
         body = (await page.inner_text('body')).lower()
         for ind in MISSING_INDICATORS:
             if ind in body:
                 return 'Missing'
-    except Exception:
-        pass
-
-    # Step 3: live selectors (first pass)
-    for sel in LIVE_SELECTORS:
-        try:
-            el = page.locator(sel).first
-            if await el.count() > 0 and await el.is_visible():
-                return 'Live'
-        except Exception:
-            continue
-
-    # Step 4: small wait + retry top selectors
-    await asyncio.sleep(3)
-    for sel in LIVE_SELECTORS[:5]:
-        try:
-            el = page.locator(sel).first
-            if await el.count() > 0:
-                return 'Live'
-        except Exception:
-            continue
-
-    # Step 5: JS DOM check
-    try:
-        if await page.evaluate(JS_CHECK):
-            return 'Live'
-    except Exception:
-        pass
-
-    # Step 6: URL-based hint — place page WITH review content
-    try:
-        cur = page.url
-        if '/maps/place/' in cur and 'data=' in cur:
-            count = await page.locator('span.wiI7pd, div.MyEned, div.jftiEf').count()
-            if count > 0:
-                return 'Live'
     except Exception:
         pass
 
