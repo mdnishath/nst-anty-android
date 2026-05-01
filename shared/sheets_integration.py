@@ -108,6 +108,55 @@ def _load_creds(resources_path):
 
 _build_error: dict = {'msg': ''}
 
+
+def _format_error(e: Exception) -> str:
+    """Squeeze a useful one-liner out of any googleapiclient / google-auth
+    exception. HttpError instances often have empty str() but carry their
+    real reason in .resp.status / .content / .error_details."""
+    try:
+        from googleapiclient.errors import HttpError
+    except Exception:
+        HttpError = None   # type: ignore
+    parts = [type(e).__name__]
+    if HttpError is not None and isinstance(e, HttpError):
+        try:
+            status = getattr(getattr(e, 'resp', None), 'status', None)
+            if status is not None:
+                parts.append(f'HTTP {status}')
+        except Exception:
+            pass
+        # error_details is a list of dicts when populated
+        try:
+            details = getattr(e, 'error_details', None)
+            if details:
+                parts.append(str(details)[:160])
+        except Exception:
+            pass
+        # Body bytes — last resort, often has a 'message' field
+        try:
+            content = getattr(e, 'content', None)
+            if content:
+                txt = content.decode('utf-8', errors='replace') if isinstance(content, (bytes, bytearray)) else str(content)
+                # Find the "message": "..." substring if present
+                import json as _j
+                try:
+                    body = _j.loads(txt)
+                    err_obj = (body or {}).get('error') or {}
+                    if err_obj.get('message'):
+                        parts.append(err_obj['message'][:200])
+                    elif err_obj.get('status'):
+                        parts.append(err_obj['status'])
+                except Exception:
+                    if 'message' in txt:
+                        parts.append(txt[:200])
+        except Exception:
+            pass
+    else:
+        s = str(e) or repr(e)
+        if s:
+            parts.append(s[:200])
+    return ': '.join(parts)
+
 def _drive(resources_path):
     """Build a Google Drive v3 service."""
     _build_error['msg'] = ''
@@ -118,7 +167,7 @@ def _drive(resources_path):
         from googleapiclient.discovery import build
         return build('drive', 'v3', credentials=creds, cache_discovery=False)
     except Exception as e:
-        _build_error['msg'] = f'Drive build: {type(e).__name__}: {e}'
+        _build_error['msg'] = f'Drive build: {_format_error(e)}'
         return None
 
 
@@ -132,7 +181,7 @@ def _sheets(resources_path):
         from googleapiclient.discovery import build
         return build('sheets', 'v4', credentials=creds, cache_discovery=False)
     except Exception as e:
-        _build_error['msg'] = f'Sheets build: {type(e).__name__}: {e}'
+        _build_error['msg'] = f'Sheets build: {_format_error(e)}'
         return None
 
 
@@ -185,7 +234,7 @@ def reauthorize(resources_path, port: int = 8600) -> dict:
         return {'success': True,
                 'message': 'Google Sheets re-authorized successfully'}
     except Exception as e:
-        return {'success': False, 'message': f'Re-auth failed: {e}'}
+        return {'success': False, 'message': f'Re-auth failed: {_format_error(e)}'}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -225,7 +274,7 @@ def list_spreadsheets(resources_path, query: str = '', limit: int = 50) -> dict:
             })
         return {'success': True, 'sheets': out}
     except Exception as e:
-        return {'success': False, 'message': f'Drive list failed: {e}', 'sheets': []}
+        return {'success': False, 'message': f'Drive list failed: {_format_error(e)}', 'sheets': []}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -256,7 +305,7 @@ def get_tabs(resources_path, spreadsheet_id: str) -> dict:
                 'tabs': tabs}
     except Exception as e:
         return {'success': False,
-                'message': f'Sheets read failed: {type(e).__name__}: {(str(e) or repr(e))[:200]}',
+                'message': f'Sheets read failed: {_format_error(e)}',
                 'tabs': []}
 
 
@@ -284,7 +333,7 @@ def read_sheet(resources_path, spreadsheet_id: str, tab_name: str,
         ).execute()
         return {'success': True, 'values': res.get('values') or []}
     except Exception as e:
-        return {'success': False, 'message': f'Read failed: {e}'}
+        return {'success': False, 'message': f'Read failed: {_format_error(e)}'}
 
 
 def write_range(resources_path, spreadsheet_id: str, range_a1: str,
@@ -304,7 +353,7 @@ def write_range(resources_path, spreadsheet_id: str, range_a1: str,
                 'updated_cells': res.get('updatedCells', 0),
                 'updated_range': res.get('updatedRange')}
     except Exception as e:
-        return {'success': False, 'message': f'Write failed: {e}'}
+        return {'success': False, 'message': f'Write failed: {_format_error(e)}'}
 
 
 def update_cell(resources_path, spreadsheet_id: str, tab_name: str,
@@ -331,7 +380,7 @@ def append_rows(resources_path, spreadsheet_id: str, tab_name: str,
         return {'success': True,
                 'updates': res.get('updates', {})}
     except Exception as e:
-        return {'success': False, 'message': f'Append failed: {e}'}
+        return {'success': False, 'message': f'Append failed: {_format_error(e)}'}
 
 
 def ensure_column(resources_path, spreadsheet_id: str, tab_name: str,
@@ -381,7 +430,7 @@ def batch_update_status(resources_path, spreadsheet_id: str, tab_name: str,
         ).execute()
         return {'success': True, 'updated': res.get('totalUpdatedCells', 0)}
     except Exception as e:
-        return {'success': False, 'message': f'Batch update failed: {e}'}
+        return {'success': False, 'message': f'Batch update failed: {_format_error(e)}'}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
